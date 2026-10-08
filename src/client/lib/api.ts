@@ -109,6 +109,11 @@ export const api = {
       method: "POST",
       body: { token, password },
     }),
+  changePassword: (current_password: string, new_password: string) =>
+    request<null>("/auth/password", {
+      method: "POST",
+      body: { current_password, new_password },
+    }),
   platformTenants: () => request<Array<Record<string, unknown>>>('/platform/tenants'),
   createPlatformTenant: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>('/platform/tenants', { method: 'POST', body }),

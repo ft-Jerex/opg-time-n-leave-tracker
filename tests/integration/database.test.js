@@ -304,6 +304,34 @@ test(
       .send({ token: new URL(invitedDirectory.body.account.invite_url).hash.split("token=")[1], password: "Employee-Invite-password-2026!" });
     assert.equal(invitedEmployeeAccepted.status, 200);
     assert.ok(invitedEmployeeAccepted.body.roles.includes("Employee"));
+    const passwordWithoutCsrf = await invitedEmployeeAgent
+      .post("/api/v1/auth/password")
+      .send({ current_password: "Employee-Invite-password-2026!", new_password: "Employee-Profile-password-2026!" });
+    assert.equal(passwordWithoutCsrf.status, 403);
+    const incorrectCurrentPassword = await invitedEmployeeAgent
+      .post("/api/v1/auth/password")
+      .set("x-csrf-token", invitedEmployeeAccepted.body.csrf_token)
+      .send({ current_password: "Not-the-current-password", new_password: "Employee-Profile-password-2026!" });
+    assert.equal(incorrectCurrentPassword.status, 422);
+    const reusedPassword = await invitedEmployeeAgent
+      .post("/api/v1/auth/password")
+      .set("x-csrf-token", invitedEmployeeAccepted.body.csrf_token)
+      .send({ current_password: "Employee-Invite-password-2026!", new_password: "Employee-Invite-password-2026!" });
+    assert.equal(reusedPassword.status, 422);
+    const changedPassword = await invitedEmployeeAgent
+      .post("/api/v1/auth/password")
+      .set("x-csrf-token", invitedEmployeeAccepted.body.csrf_token)
+      .send({ current_password: "Employee-Invite-password-2026!", new_password: "Employee-Profile-password-2026!" });
+    assert.equal(changedPassword.status, 204);
+    assert.equal((await invitedEmployeeAgent.get("/api/v1/auth/me")).status, 200);
+    assert.equal((await request(app).post("/api/v1/auth/login").send({ email: invitedEmail, password: "Employee-Invite-password-2026!" })).status, 401);
+    assert.equal((await request(app).post("/api/v1/auth/login").send({ email: invitedEmail, password: "Employee-Profile-password-2026!" })).status, 200);
+    const passwordAudit = await pool.query(
+      "SELECT metadata FROM audit_events WHERE tenant_id=$1 AND actor_user_id=$2 AND action='password_changed' ORDER BY occurred_at DESC LIMIT 1",
+      [invitedEmployeeAccepted.body.tenant_id, invitedEmployeeAccepted.body.user_id],
+    );
+    assert.equal(passwordAudit.rowCount, 1);
+    assert.deepEqual(passwordAudit.rows[0].metadata, { source: "profile" });
     const passwordReset = await admin
       .post(`/api/v1/hr/directory/${invitedDirectory.body.employee_id}/reset-password`)
       .set("x-csrf-token", context.body.csrf_token)
@@ -458,6 +486,24 @@ test(
       platformAudit.rows.map(({ action }) => action),
       ["tenant_created", "tenant_invitation_created", "tenant_updated", "tenant_suspended", "tenant_reactivated"],
     );
+    const platformPassword = "Platform-Profile-password-2026!";
+    const platformPasswordChanged = await admin
+      .post("/api/v1/auth/password")
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({ current_password: process.env.SEED_ADMIN_PASSWORD, new_password: platformPassword });
+    assert.equal(platformPasswordChanged.status, 204);
+    assert.equal((await admin.get("/api/v1/auth/me")).status, 200);
+    assert.equal((await request(app).post("/api/v1/auth/login").send({ email: "admin@dev.local", password: platformPassword })).status, 200);
+    const platformPasswordAudit = await pool.query(
+      "SELECT metadata FROM platform_audit_events WHERE platform_user_id='platform-admin' AND action='password_changed' ORDER BY occurred_at DESC LIMIT 1",
+    );
+    assert.equal(platformPasswordAudit.rowCount, 1);
+    assert.deepEqual(platformPasswordAudit.rows[0].metadata, { source: "profile" });
+    const platformPasswordRestored = await admin
+      .post("/api/v1/auth/password")
+      .set("x-csrf-token", provisioned.body.csrf_token)
+      .send({ current_password: platformPassword, new_password: process.env.SEED_ADMIN_PASSWORD });
+    assert.equal(platformPasswordRestored.status, 204);
     delete process.env.INVITATION_TEST_TOKEN;
     await pool.end();
   },

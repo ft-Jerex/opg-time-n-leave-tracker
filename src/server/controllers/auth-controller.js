@@ -2,6 +2,7 @@ import { pool } from "../config/database.js";
 import {
   authenticate,
   acceptInvitation as acceptInvitationService,
+  changePassword as changePasswordService,
   issueSession,
   issueCsrf,
   signCsrf,
@@ -85,6 +86,14 @@ export const acceptInvitation = async (req, res) => {
   const accepted = await acceptInvitationService(req.body.token, req.body.password);
   const actor = await authenticate(pool, accepted.email, req.body.password);
   return authPayload(actor, setAuthCookies(res, actor));
+};
+
+export const changePassword = async (req) => {
+  await changePasswordService(
+    req.actor,
+    req.body?.current_password,
+    req.body?.new_password,
+  );
 };
 
 export const me = async (req) => {

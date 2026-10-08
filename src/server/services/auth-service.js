@@ -19,6 +19,52 @@ export const hashPassword = (password) =>
   bcrypt.hash(password, Number(process.env.BCRYPT_ROUNDS || 12));
 export const verifyPassword = (password, hash) =>
   bcrypt.compare(password, hash);
+
+export const changePassword = async (actor, currentPassword, newPassword) => {
+  if (typeof currentPassword !== "string" || !currentPassword)
+    throw new HttpError(422, "Invalid Password", "The current password is required.");
+  if (typeof newPassword !== "string" || newPassword.length < 12)
+    throw new HttpError(422, "Invalid Password", "The new password must be at least 12 characters.");
+  return withTransaction(async (client) => {
+    const isPlatform = actor.actor_kind === "platform";
+    const actorId = isPlatform ? actor.platform_user_id || actor.user_id : actor.user_id;
+    const credentials = await client.query(
+      isPlatform
+        ? "SELECT password_hash FROM platform_credentials WHERE platform_user_id=$1 FOR UPDATE"
+        : "SELECT password_hash FROM auth_credentials WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE",
+      isPlatform ? [actorId] : [actor.tenant_id, actorId],
+    );
+    if (!credentials.rowCount)
+      throw new HttpError(409, "Credentials Unavailable", "Password credentials are unavailable for this account.");
+    const passwordHash = credentials.rows[0].password_hash;
+    if (!(await verifyPassword(currentPassword, passwordHash)))
+      throw new HttpError(422, "Invalid Password", "The current password is incorrect.");
+    if (await verifyPassword(newPassword, passwordHash))
+      throw new HttpError(422, "Invalid Password", "The new password must be different from the current password.");
+    const nextHash = await hashPassword(newPassword);
+    await client.query(
+      isPlatform
+        ? "UPDATE platform_credentials SET password_hash=$1,updated_at=now() WHERE platform_user_id=$2"
+        : "UPDATE auth_credentials SET password_hash=$1,updated_at=now() WHERE tenant_id=$2 AND user_id=$3",
+      isPlatform ? [nextHash, actorId] : [nextHash, actor.tenant_id, actorId],
+    );
+    if (isPlatform) {
+      await client.query(
+        `INSERT INTO platform_audit_events
+          (event_id,platform_user_id,action,target_type,target_id,occurred_at,reason,metadata)
+         VALUES ($1,$2,'password_changed','PlatformUser',$2,now(),'User changed their password',$3::jsonb)`,
+        [crypto.randomUUID(), actorId, JSON.stringify({ source: "profile" })],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO audit_events
+          (event_id,tenant_id,actor_user_id,actor_role,action,target_type,target_id,occurred_at,reason,metadata)
+         VALUES ($1,$2,$3,$4,'password_changed','User',$3,now(),'User changed their password',$5::jsonb)`,
+        [crypto.randomUUID(), actor.tenant_id, actorId, actor.actor_role || "employee", JSON.stringify({ source: "profile" })],
+      );
+    }
+  });
+};
 export const issueSession = (actor) =>
   jwt.sign(
     {

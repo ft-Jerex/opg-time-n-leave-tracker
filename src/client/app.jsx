@@ -1506,7 +1506,36 @@ function Holidays({ data, canManage = false, refresh, notify }) {
     </div>
   );
 }
-function Profile({ user, employee, tenant }) {
+function Profile({ user, employee, tenant, notify }) {
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [passwordError, setPasswordError] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const updatePassword = (key, value) => {
+    setPasswords((current) => ({ ...current, [key]: value }));
+    setPasswordError("");
+  };
+  const submitPassword = async (event) => {
+    event.preventDefault();
+    if (passwords.next.length < 12) {
+      setPasswordError("The new password must be at least 12 characters.");
+      return;
+    }
+    if (passwords.next !== passwords.confirm) {
+      setPasswordError("The new passwords do not match.");
+      return;
+    }
+    setChangingPassword(true);
+    setPasswordError("");
+    try {
+      await api.changePassword(passwords.current, passwords.next);
+      setPasswords({ current: "", next: "", confirm: "" });
+      notify("Your password was changed successfully.");
+    } catch (failure) {
+      setPasswordError(failure.message);
+    } finally {
+      setChangingPassword(false);
+    }
+  };
   return (
     <div className="space-y-5">
       <Header
@@ -1542,6 +1571,21 @@ function Profile({ user, employee, tenant }) {
           </CardContent>
         </Card>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Change password</CardTitle>
+          <CardDescription>Enter your current password, then choose a new password with at least 12 characters.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="max-w-xl space-y-4" onSubmit={submitPassword} noValidate>
+            <Field label="Current password" type="password" autoComplete="current-password" required value={passwords.current} onChange={(value) => updatePassword("current", value)} />
+            <Field label="New password" type="password" autoComplete="new-password" minLength="12" required value={passwords.next} helperText="Use at least 12 characters." onChange={(value) => updatePassword("next", value)} />
+            <Field label="Confirm new password" type="password" autoComplete="new-password" minLength="12" required value={passwords.confirm} onChange={(value) => updatePassword("confirm", value)} />
+            {passwordError ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{passwordError}</p> : null}
+            <Button disabled={changingPassword || !passwords.current || !passwords.next || !passwords.confirm}>{changingPassword ? "Changing password…" : "Change password"}</Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -4046,7 +4090,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
       />
     );
   else if (page === "profile")
-    content = <Profile user={user} employee={employee} tenant={tenant} />;
+    content = <Profile user={user} employee={employee} tenant={tenant} notify={notify} />;
   else if (page === "organization") content = <OrganizationOverview data={data} onNavigate={choose} />;
   else if (page === "approvals")
     content = <Approvals data={data} refresh={refresh} notify={notify} />;
