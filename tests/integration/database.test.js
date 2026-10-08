@@ -304,6 +304,21 @@ test(
       .send({ token: new URL(invitedDirectory.body.account.invite_url).hash.split("token=")[1], password: "Employee-Invite-password-2026!" });
     assert.equal(invitedEmployeeAccepted.status, 200);
     assert.ok(invitedEmployeeAccepted.body.roles.includes("Employee"));
+    const passwordReset = await admin
+      .post(`/api/v1/hr/directory/${invitedDirectory.body.employee_id}/reset-password`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({});
+    assert.equal(passwordReset.status, 200);
+    assert.match(passwordReset.body.invite_url, /#\/reset-password\?token=/);
+    const passwordResetAgent = request.agent(app);
+    const passwordResetAccepted = await passwordResetAgent
+      .post("/api/v1/auth/invitations/accept")
+      .send({ token: new URL(passwordReset.body.invite_url).hash.split("token=")[1], password: "Employee-Reset-password-2026!" });
+    assert.equal(passwordResetAccepted.status, 200);
+    const oldPasswordLogin = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: invitedEmail, password: "Employee-Invite-password-2026!" });
+    assert.equal(oldPasswordLogin.status, 401);
 
     const registrationAgent = request.agent(app);
     const registeredTenantId = `public-${Date.now()}`;

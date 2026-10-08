@@ -3906,6 +3906,11 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
+  useEffect(() => {
+    if (sessionStorage.getItem("tlt_password_reset_success") !== "1") return;
+    sessionStorage.removeItem("tlt_password_reset_success");
+    notify("Your password was reset successfully.");
+  }, []);
   let nav = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["attendance", "Attendance", Clock3],
@@ -4211,7 +4216,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
   );
 }
 
-function InvitationAccept({ onLogin }) {
+function InvitationAccept({ onLogin, passwordReset = false }) {
   const token = new URLSearchParams(window.location.hash.split("?")[1] || "").get("token") || "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -4228,6 +4233,7 @@ function InvitationAccept({ onLogin }) {
     try {
       const account = await api.acceptInvitation(token, password);
       localStorage.setItem("tlt_has_session", "1");
+      if (passwordReset) sessionStorage.setItem("tlt_password_reset_success", "1");
       onLogin(account);
       window.location.hash = "/app/dashboard";
     } catch (failure) {
@@ -4236,7 +4242,10 @@ function InvitationAccept({ onLogin }) {
       setBusy(false);
     }
   };
-  return <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#fff8ed] p-5"><Card className="relative w-full max-w-md border-orange-200/70 shadow-2xl shadow-orange-950/10"><CardHeader><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-primary font-bold text-white">TL</div><div><p className="text-sm font-semibold text-primary">OPG Workforce</p><p className="text-xs text-muted-foreground">Organization invitation</p></div></div><div><h1 className="text-3xl">Set up your account</h1><CardDescription className="mt-2">Create a password to activate your HR administrator access.</CardDescription></div></CardHeader><CardContent><form className="space-y-4" onSubmit={submit}>{!token ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">This invitation link is missing its token.</p> : null}<Field label="Password" type="password" minLength="12" required value={password} onChange={setPassword} /><Field label="Confirm password" type="password" minLength="12" required value={confirm} onChange={setConfirm} />{error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}<Button className="w-full" disabled={busy || !token}>{busy ? "Activating…" : "Activate account"}</Button></form></CardContent></Card></main>;
+  const title = passwordReset ? "Reset your password" : "Set up your account";
+  const detail = passwordReset ? "Choose a new password for your account." : "Create a password to activate your account.";
+  const action = passwordReset ? "Reset password" : "Activate account";
+  return <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#fff8ed] p-5"><Card className="relative w-full max-w-md border-orange-200/70 shadow-2xl shadow-orange-950/10"><CardHeader><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-primary font-bold text-white">TL</div><div><p className="text-sm font-semibold text-primary">OPG Workforce</p><p className="text-xs text-muted-foreground">{passwordReset ? "Password reset" : "Organization invitation"}</p></div></div><div><h1 className="text-3xl">{title}</h1><CardDescription className="mt-2">{detail}</CardDescription></div></CardHeader><CardContent><form className="space-y-4" onSubmit={submit}>{!token ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">This {passwordReset ? "password reset" : "invitation"} link is missing its token.</p> : null}<Field label="Password" type="password" minLength="12" required value={password} onChange={setPassword} /><Field label="Confirm password" type="password" minLength="12" required value={confirm} onChange={setConfirm} />{error ? <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}<Button className="w-full" disabled={busy || !token}>{busy ? (passwordReset ? "Resetting…" : "Activating…") : action}</Button></form></CardContent></Card></main>;
 }
 
 function App() {
@@ -4333,8 +4342,11 @@ function App() {
       </main>
     );
   const isInvitationRoute = hash.startsWith("#/accept-invitation");
+  const isPasswordResetRoute = hash.startsWith("#/reset-password");
   const isRegistrationRoute = hash.startsWith("#/register");
-  return user ? (
+  return isPasswordResetRoute ? (
+    <InvitationAccept onLogin={setUser} passwordReset />
+  ) : user ? (
     <Shell
       user={user}
       data={data}

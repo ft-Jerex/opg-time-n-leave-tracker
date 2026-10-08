@@ -12,6 +12,10 @@ const invitationUrl = (req, token) => {
   const base = (process.env.INVITATION_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
   return `${base}/#/accept-invitation?token=${encodeURIComponent(token)}`;
 };
+const passwordResetUrl = (req, token) => {
+  const base = (process.env.INVITATION_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  return `${base}/#/reset-password?token=${encodeURIComponent(token)}`;
+};
 const invitationExpiry = () => new Date(Date.now() + Math.min(Math.max(Number(process.env.INVITATION_TTL_HOURS || 72), 1), 720) * 60 * 60 * 1000).toISOString();
 
 const roleCapabilities = {
@@ -216,7 +220,7 @@ export const resetPassword = async (req) => withTransaction(async (client) => {
     [inviteId, req.tenantId, user.user_id, req.params.employee_id, user.email, invitationHash(token), expiresAt, req.actor.user_id],
   );
   await audit(client, req, "password_reset_link_generated", "User", user.user_id, "Password reset invitation link generated", { invite_id: inviteId, expires_at: expiresAt });
-  return { employee_id: req.params.employee_id, user_id: user.user_id, email: user.email, invite_url: invitationUrl(req, token), invite_expires_at: expiresAt };
+  return { employee_id: req.params.employee_id, user_id: user.user_id, email: user.email, invite_url: passwordResetUrl(req, token), invite_expires_at: expiresAt };
 });
 
 export const generateDirectoryInvitationLink = async (req) => withTransaction(async (client) => {
