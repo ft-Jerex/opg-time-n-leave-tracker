@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
+import { effectiveCapabilities } from "../domain/role-capabilities.js";
 import { HttpError } from "../views/problem-view.js";
 
 const withTransaction = async (fn) => {
@@ -226,6 +227,7 @@ export const authenticate = async (client, email, password) => {
       "Email or password is incorrect.",
     );
   const { password_hash: _hash, ...actor } = record;
+  actor.capabilities = effectiveCapabilities(actor.capabilities);
   return {
     ...actor,
     actor_kind: "tenant",

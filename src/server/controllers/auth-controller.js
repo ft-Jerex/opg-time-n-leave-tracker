@@ -10,6 +10,7 @@ import {
 import { HttpError } from "../views/problem-view.js";
 import { clearLoginRateLimit } from "../middleware/login-rate-limit.js";
 import { registerTenant } from "../services/registration-service.js";
+import { effectiveCapabilities } from "../domain/role-capabilities.js";
 
 const maxAge = () =>
   Number(process.env.COOKIE_MAX_AGE_MS || 8 * 60 * 60 * 1000);
@@ -136,6 +137,7 @@ export const me = async (req) => {
     );
   return {
     ...result.rows[0],
+    capabilities: effectiveCapabilities(result.rows[0].capabilities),
     actor_kind: req.actor.actor_kind,
     roles: req.actor.roles,
     memberships: req.actor.memberships,
@@ -171,7 +173,7 @@ export const context = async (req, res) => {
     display_name: membership?.display_name || req.actor.display_name,
     email: membership?.email || req.actor.email,
     employee_id: membership?.employee_id || null,
-    capabilities: membership?.capabilities || req.actor.capabilities,
+    capabilities: effectiveCapabilities(membership?.capabilities || req.actor.capabilities),
   };
   res.cookie("tlt_session", issueSession(actor), cookieOptions());
   return {

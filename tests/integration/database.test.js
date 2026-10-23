@@ -310,6 +310,7 @@ test(
     const existingLogin = await provisionedLogin.post("/api/v1/auth/login").send({ email: unprovisionedEmail, password: "Existing-Password-2026!" });
     assert.equal(existingLogin.status, 200);
     assert.ok(existingLogin.body.roles.includes("Reporting Manager"));
+    assert.ok(existingLogin.body.capabilities.includes("attendance:write"));
     const employeeRoleUpdateForbidden = await user
       .put(`/api/v1/hr/directory/${provisionedExisting.body.employee.employee_id}`)
       .set("x-csrf-token", userCsrf)
@@ -330,6 +331,7 @@ test(
       ["northstar", provisionedExisting.body.employee.employee_id],
     );
     assert.ok(promotedCapabilities.rows[0].capabilities.includes("users:write"));
+    assert.ok(promotedCapabilities.rows[0].capabilities.includes("attendance:write"));
     const roleAudit = await pool.query(
       "SELECT metadata FROM audit_events WHERE tenant_id=$1 AND action='account_role_update' AND target_id=$2 ORDER BY occurred_at DESC LIMIT 1",
       ["northstar", promotedExisting.body.account.user_id],

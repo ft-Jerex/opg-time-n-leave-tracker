@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { withTransaction } from "../config/database.js";
 import { hashPassword } from "./auth-service.js";
 import { HttpError } from "../views/problem-view.js";
+import { roleCapabilities } from "../domain/role-capabilities.js";
+
+export { roleCapabilities } from "../domain/role-capabilities.js";
 
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const now = () => new Date().toISOString();
@@ -17,18 +20,6 @@ const passwordResetUrl = (req, token) => {
   return `${base}/#/reset-password?token=${encodeURIComponent(token)}`;
 };
 const invitationExpiry = () => new Date(Date.now() + Math.min(Math.max(Number(process.env.INVITATION_TTL_HOURS || 72), 1), 720) * 60 * 60 * 1000).toISOString();
-
-export const roleCapabilities = {
-  Employee: ["attendance:write", "attendance-adjustments:write", "leave:write", "leave-requests:write", "overtime-requests:write"],
-  "Reporting Manager": ["attendance:approve", "leave:approve", "overtime-requests:write", "overtime:approve", "alerts:write"],
-  "HR Manager": [
-    "users:write", "departments:write", "job-profiles:write", "leave-types:write",
-    "job-leave-policies:write", "leave-balances:write", "leave-ledger-entries:write",
-    "leave-requests:write", "leave:approve", "attendance:approve", "attendance-adjustments:write", "attendance:override",
-    "overtime-requests:write", "overtime:approve",
-    "attachments:write", "alerts:write",
-  ],
-};
 
 const assertString = (value, field, { nullable = false } = {}) => {
   if (nullable && value === null) return;

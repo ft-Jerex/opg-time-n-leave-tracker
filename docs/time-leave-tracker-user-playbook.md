@@ -39,8 +39,8 @@ On a phone, select the menu icon to show or hide the left menu.
 | User type | Main features |
 | --- | --- |
 | Employee | Clock in/out, view attendance, request corrections, leave, and overtime |
-| Reporting Manager | Team presence, approvals, leave calendar, and team reports; personal actions when Employee access is also assigned |
-| HR Manager | Employee setup, policies, overrides, reports, and audit records; personal and team actions when those roles are also assigned |
+| Reporting Manager | Personal employee actions plus team presence, approvals, leave calendar, and team reports |
+| HR Manager | Personal employee actions plus employee setup, team approvals, policies, overrides, reports, and audit records |
 | Read-only User | View personal dashboard, attendance, leave, holidays, and profile without making changes |
 | Platform Administrator | Create and manage organizations, access, platform settings, and platform audit records |
 
@@ -83,7 +83,7 @@ Also use **Holidays** to check non-working dates and **Profile** to review your 
 
 ## 5. Reporting Manager instructions
 
-A reporting manager manages authorized direct reports. Personal clock, leave, and overtime actions are available only when the account also has Employee access.
+A reporting manager manages authorized direct reports and retains personal clock, leave, and overtime actions.
 
 ### Open your team workspace
 

@@ -1,5 +1,6 @@
 import { HttpError } from "../views/problem-view.js";
 import { verifySession, verifyCsrf } from "../services/auth-service.js";
+import { effectiveCapabilities } from "../domain/role-capabilities.js";
 
 export const requireAuth = async (req, _res, next) => {
   const external = process.env.AUTH_ADAPTER_MODULE;
@@ -64,12 +65,13 @@ export const requireAuth = async (req, _res, next) => {
         );
         tenantActor = tenantResult.rows[0];
       }
+      const capabilities = effectiveCapabilities(tenantActor?.capabilities || platform.capabilities);
       req.actor = {
         ...platform,
         tenant_id: platform.active_tenant_id || null,
         employee_id: tenantActor?.employee_id || null,
         user_id: platform.tenant_user_id || platform.user_id,
-        capabilities: tenantActor?.capabilities || platform.capabilities,
+        capabilities,
         roles: platform.roles || ["Platform Administrator"],
         actor_kind: "platform",
         actor_role: platform.active_tenant_id ? "hr_manager" : "platform_admin",
@@ -88,19 +90,21 @@ export const requireAuth = async (req, _res, next) => {
         "Unauthenticated",
         "The session user is unavailable.",
       );
+    const capabilities = effectiveCapabilities(actor.capabilities);
     req.actor = {
       ...actor,
+      capabilities,
       actor_kind: "tenant",
       roles: [
         "Employee",
-        ...(actor.capabilities.includes("leave:approve")
+        ...(capabilities.includes("leave:approve")
           ? ["Reporting Manager"]
           : []),
-        ...(actor.capabilities.includes("users:write") ? ["HR Manager"] : []),
+        ...(capabilities.includes("users:write") ? ["HR Manager"] : []),
       ],
-      actor_role: actor.capabilities.includes("users:write")
+      actor_role: capabilities.includes("users:write")
         ? "tenant_admin"
-        : actor.capabilities.includes("leave:approve")
+        : capabilities.includes("leave:approve")
           ? "manager"
           : "employee",
     };
