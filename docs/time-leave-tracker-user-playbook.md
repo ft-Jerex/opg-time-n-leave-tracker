@@ -119,7 +119,9 @@ HR can switch between three work areas: **Myself** for personal records, **Team*
 3. Enable portal access, choose the correct role, and enter the employee's work email.
 4. Save, then securely send the one-time invitation link to the employee.
 
-For an employee marked **Not provisioned**, select **Edit** and create their portal login. For an existing account, select **Reset password** and privately send the one-time reset link.
+For an employee marked **Not provisioned**, select **Edit** and create their portal login. For an existing account, select **Edit** to change its **Employee**, **Reporting Manager**, or **HR Manager** role. Role changes take effect on the user's next request and appear in the audit log. The last active HR Manager cannot be changed to another role until a replacement HR Manager is assigned.
+
+Select **Reset password** to generate a one-time reset link, then send it privately to the employee.
 
 ### Maintain organization setup
 

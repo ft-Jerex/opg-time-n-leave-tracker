@@ -18,7 +18,7 @@ const passwordResetUrl = (req, token) => {
 };
 const invitationExpiry = () => new Date(Date.now() + Math.min(Math.max(Number(process.env.INVITATION_TTL_HOURS || 72), 1), 720) * 60 * 60 * 1000).toISOString();
 
-const roleCapabilities = {
+export const roleCapabilities = {
   Employee: ["attendance:write", "attendance-adjustments:write", "leave:write", "leave-requests:write", "overtime-requests:write"],
   "Reporting Manager": ["attendance:approve", "leave:approve", "overtime-requests:write", "overtime:approve", "alerts:write"],
   "HR Manager": [
@@ -87,7 +87,7 @@ const validateEmployee = (payload) => {
     throw new HttpError(422, "Invalid Request", "status is invalid.");
 };
 
-const accountCapabilities = (roles = [], requested = []) => {
+export const accountCapabilities = (roles = [], requested = []) => {
   const selected = Array.isArray(roles) && roles.length ? roles : ["Employee"];
   if (selected.some((role) => !roleCapabilities[role]))
     throw new HttpError(422, "Invalid Request", "One or more account roles are invalid.");
@@ -99,6 +99,66 @@ const accountCapabilities = (roles = [], requested = []) => {
     return [...new Set(requested)];
   }
   return [...allowed];
+};
+
+export const accountRoles = (capabilities = []) => {
+  if (capabilities.includes("users:write")) return ["HR Manager"];
+  if (capabilities.includes("leave:approve")) return ["Reporting Manager"];
+  return ["Employee"];
+};
+
+const sameCapabilities = (left, right) => {
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((capability, index) => capability === sortedRight[index]);
+};
+
+const updatePortalAccountRoles = async (client, req, employee) => {
+  const roles = req.body?.account?.roles;
+  if (!Array.isArray(roles) || roles.length !== 1)
+    throw new HttpError(422, "Invalid Request", "Exactly one portal role is required.");
+  const capabilities = accountCapabilities(roles);
+
+  // Consistent tenant-wide lock ordering prevents two concurrent demotions
+  // from both concluding that another active HR Manager remains.
+  const tenantAccounts = await client.query(
+    `SELECT user_id,employee_id,capabilities,status
+       FROM users
+      WHERE tenant_id=$1
+      ORDER BY user_id
+      FOR UPDATE`,
+    [req.tenantId],
+  );
+  const current = tenantAccounts.rows.find((row) => row.employee_id === employee.employee_id);
+  if (!current)
+    throw new HttpError(422, "Invalid Request", "Create a portal account before assigning a role.");
+
+  const previousRoles = accountRoles(current.capabilities);
+  if (sameCapabilities(current.capabilities, capabilities))
+    return { user_id: current.user_id, roles, status: current.status, changed: false };
+
+  const removesHrAccess = current.status === "active" &&
+    current.capabilities.includes("users:write") &&
+    !capabilities.includes("users:write");
+  if (removesHrAccess) {
+    const activeHrCount = tenantAccounts.rows.filter(
+      (row) => row.status === "active" && row.capabilities.includes("users:write"),
+    ).length;
+    if (activeHrCount <= 1)
+      throw new HttpError(409, "Last HR Manager", "Assign another active HR Manager before removing this role.");
+  }
+
+  await client.query(
+    "UPDATE users SET capabilities=$1 WHERE tenant_id=$2 AND user_id=$3",
+    [capabilities, req.tenantId, current.user_id],
+  );
+  await audit(client, req, "account_role_update", "User", current.user_id, "Portal account role updated", {
+    employee_id: employee.employee_id,
+    previous_roles: previousRoles,
+    roles,
+  });
+  return { user_id: current.user_id, roles, status: current.status, changed: true };
 };
 
 const createPortalAccount = async (client, tenantId, employee, account) => {
@@ -191,9 +251,15 @@ export const updateDirectoryEntry = async (req) => withTransaction(async (client
   );
   const account = req.body?.account?.enabled
     ? await createPortalAccount(client, req.tenantId, employee, { ...req.body.account, created_by: req.actor.user_id, request: req })
-    : null;
+    : req.body?.account?.roles !== undefined
+      ? await updatePortalAccountRoles(client, req, employee)
+      : null;
   const directReports = await client.query("SELECT employee_id FROM employees WHERE tenant_id=$1 AND manager_id=$2 AND status='active' ORDER BY employee_id", [req.tenantId, employee.employee_id]);
-  await audit(client, req, "directory_update", "Employee", employee.employee_id, "HR directory assignment updated", { manager_id: employee.manager_id, account_created: Boolean(account) });
+  await audit(client, req, "directory_update", "Employee", employee.employee_id, "HR directory assignment updated", {
+    manager_id: employee.manager_id,
+    account_created: Boolean(req.body?.account?.enabled && account),
+    account_role_changed: Boolean(account?.changed),
+  });
   return { employee: result.rows[0], account, reporting_scope: { direct_report_ids: directReports.rows.map((row) => row.employee_id), direct_report_count: directReports.rowCount } };
 });
 

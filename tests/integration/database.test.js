@@ -310,6 +310,45 @@ test(
     const existingLogin = await provisionedLogin.post("/api/v1/auth/login").send({ email: unprovisionedEmail, password: "Existing-Password-2026!" });
     assert.equal(existingLogin.status, 200);
     assert.ok(existingLogin.body.roles.includes("Reporting Manager"));
+    const employeeRoleUpdateForbidden = await user
+      .put(`/api/v1/hr/directory/${provisionedExisting.body.employee.employee_id}`)
+      .set("x-csrf-token", userCsrf)
+      .send({ account: { roles: ["HR Manager"] } });
+    assert.equal(employeeRoleUpdateForbidden.status, 403);
+    const promotedExisting = await admin
+      .put(`/api/v1/hr/directory/${provisionedExisting.body.employee.employee_id}`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({
+        ...provisionedExisting.body.employee,
+        account: { roles: ["HR Manager"] },
+      });
+    assert.equal(promotedExisting.status, 200);
+    assert.deepEqual(promotedExisting.body.account.roles, ["HR Manager"]);
+    assert.equal(promotedExisting.body.account.changed, true);
+    const promotedCapabilities = await pool.query(
+      "SELECT capabilities FROM users WHERE tenant_id=$1 AND employee_id=$2",
+      ["northstar", provisionedExisting.body.employee.employee_id],
+    );
+    assert.ok(promotedCapabilities.rows[0].capabilities.includes("users:write"));
+    const roleAudit = await pool.query(
+      "SELECT metadata FROM audit_events WHERE tenant_id=$1 AND action='account_role_update' AND target_id=$2 ORDER BY occurred_at DESC LIMIT 1",
+      ["northstar", promotedExisting.body.account.user_id],
+    );
+    assert.deepEqual(roleAudit.rows[0].metadata.previous_roles, ["Reporting Manager"]);
+    assert.deepEqual(roleAudit.rows[0].metadata.roles, ["HR Manager"]);
+    const genericRoleBypass = await admin
+      .put(`/api/v1/users/${promotedExisting.body.account.user_id}`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ capabilities: [] });
+    assert.equal(genericRoleBypass.status, 404);
+    const invalidExistingRole = await admin
+      .put(`/api/v1/hr/directory/${provisionedExisting.body.employee.employee_id}`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({
+        ...provisionedExisting.body.employee,
+        account: { roles: ["Platform Administrator"] },
+      });
+    assert.equal(invalidExistingRole.status, 422);
 
     const invitedEmail = `employee-invite-${Date.now()}@dev.local`;
     const invitedDirectory = await admin
@@ -407,6 +446,15 @@ test(
     assert.equal(registeredEmployees.status, 200);
     assert.equal(registeredEmployees.body.length, 1);
     assert.equal(registeredEmployees.body[0].status, "active");
+    const lastHrDemotion = await registrationAgent
+      .put(`/api/v1/hr/directory/${registered.body.employee_id}`)
+      .set("x-csrf-token", registered.body.csrf_token)
+      .send({
+        ...registeredEmployees.body[0],
+        account: { roles: ["Employee"] },
+      });
+    assert.equal(lastHrDemotion.status, 409);
+    assert.equal(lastHrDemotion.body.title, "Last HR Manager");
     const registeredDepartments = await registrationAgent.get("/api/v1/departments");
     assert.equal(registeredDepartments.status, 200);
     assert.equal(registeredDepartments.body[0].name, "General");
