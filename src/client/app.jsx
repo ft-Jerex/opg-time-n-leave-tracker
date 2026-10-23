@@ -1104,20 +1104,38 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
   const selectedBalance = personalBalances.find(
     (item) => item.leave_type_id === form.leave_type_id,
   );
-  const withdraw = async (item) => {
-    if (!window.confirm("Withdraw this pending leave request?")) return;
+  const [busyRequestId, setBusyRequestId] = useState("");
+  const transitionRequest = async (item, action, confirmation, successMessage) => {
+    if (!window.confirm(confirmation)) return;
+    setBusyRequestId(item.request_id);
     try {
       await api.transition(
-        `/leave-requests/${item.request_id}/withdraw`,
+        `/leave-requests/${item.request_id}/${action}`,
         {},
         item.version,
       );
-      notify("Leave request withdrawn.");
+      notify(successMessage);
       await refresh();
     } catch (error) {
       notify(error.message, "error");
+    } finally {
+      setBusyRequestId("");
     }
   };
+  const withdraw = (item) =>
+    transitionRequest(
+      item,
+      "withdraw",
+      "Withdraw this pending leave request?",
+      "Leave request withdrawn.",
+    );
+  const cancel = (item) =>
+    transitionRequest(
+      item,
+      "cancel",
+      "Cancel this approved leave request? The charged leave will be returned to your balance.",
+      "Approved leave cancelled and balance restored.",
+    );
   const [view, setView] = useState("calendar");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1228,8 +1246,21 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
                   <div className="flex items-center gap-2">
                     <Status value={item.status} />
                     {canWrite && item.status === "pending" && (
-                      <Button variant="outline" onClick={() => withdraw(item)}>
-                        Withdraw
+                      <Button
+                        variant="outline"
+                        disabled={Boolean(busyRequestId)}
+                        onClick={() => withdraw(item)}
+                      >
+                        {busyRequestId === item.request_id ? "Withdrawing…" : "Withdraw"}
+                      </Button>
+                    )}
+                    {canWrite && item.status === "approved" && (
+                      <Button
+                        variant="outline"
+                        disabled={Boolean(busyRequestId)}
+                        onClick={() => cancel(item)}
+                      >
+                        {busyRequestId === item.request_id ? "Cancelling…" : "Cancel leave"}
                       </Button>
                     )}
                   </div>

@@ -41,6 +41,10 @@ test(
       (await user.get("/api/v1/employees").set("x-tenant-id", "harbor")).status,
       403,
     );
+    const balanceBeforeCancellation = await pool.query(
+      "SELECT remaining FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3 ORDER BY as_of DESC LIMIT 1",
+      ["northstar", "ns-morgan", "ns-annual"],
+    );
 
     const created = await user
       .post("/api/v1/leave-requests")
@@ -94,7 +98,36 @@ test(
     );
     assert.equal(ledger.rowCount, 1);
     assert.equal(ledger.rows[0].entry_type, "usage");
-  assert.equal(Number(ledger.rows[0].amount), -2);
+    assert.equal(Number(ledger.rows[0].amount), -2);
+    const cancelled = await user
+      .post(`/api/v1/leave-requests/${created.body.request_id}/cancel`)
+      .set("x-csrf-token", userCsrf)
+      .set("if-match", "2")
+      .send({});
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.status, "cancelled");
+    const cancellationLedger = await pool.query(
+      "SELECT amount, entry_type FROM leave_ledger_entries WHERE tenant_id = $1 AND source_id = $2 ORDER BY CASE entry_type WHEN 'usage' THEN 1 WHEN 'reversal' THEN 2 ELSE 3 END",
+      ["northstar", created.body.request_id],
+    );
+    assert.deepEqual(
+      cancellationLedger.rows.map((row) => ({
+        amount: Number(row.amount),
+        entry_type: row.entry_type,
+      })),
+      [
+        { amount: -2, entry_type: "usage" },
+        { amount: 2, entry_type: "reversal" },
+      ],
+    );
+    const balanceAfterCancellation = await pool.query(
+      "SELECT remaining FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3 ORDER BY as_of DESC LIMIT 1",
+      ["northstar", "ns-morgan", "ns-annual"],
+    );
+    assert.equal(
+      Number(balanceAfterCancellation.rows[0].remaining),
+      Number(balanceBeforeCancellation.rows[0].remaining),
+    );
   const adjustment = await user.post("/api/v1/attendance-adjustments").set("x-csrf-token", userCsrf).send({
     employee_id: "ns-morgan", local_date: "2027-12-01", original: { clock_in: "09:00", clock_out: null }, proposed: { clock_in: "09:00", clock_out: "17:00" },
     reason: "Integration punch correction", attachment_ids: [], status: "draft", submitted_at: new Date().toISOString(), decided_by: null, decided_at: null, decision_note: null, version: 0,
@@ -171,7 +204,7 @@ test(
     );
     assert.deepEqual(
       audit.rows.map(({ action }) => action),
-      ["resource_create", "leave_submit", "leave_approve"],
+      ["resource_create", "leave_submit", "leave_approve", "leave_cancel"],
     );
 
     const readonly = request.agent(app);

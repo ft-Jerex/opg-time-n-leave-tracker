@@ -114,6 +114,16 @@ try {
     results.push({ scenario: "manager-approves-custom-leave", status: "PASS" });
   } finally { await manager.context.close(); }
 
+  await user.page.reload({ waitUntil: "domcontentloaded", timeout: 30000 });
+  await user.page.getByRole("button", { name: "Leave", exact: true }).click();
+  await user.page.getByRole("heading", { name: "Leave" }).waitFor();
+  const approvedRequest = user.page.getByText(leaveReason, { exact: true }).locator("xpath=ancestor::div[.//button[normalize-space()='Cancel leave']][1]");
+  user.page.once("dialog", (dialog) => dialog.accept());
+  await approvedRequest.getByRole("button", { name: "Cancel leave", exact: true }).click();
+  const cancelledLeave = await api(user.page, "leave-requests");
+  assert.equal(cancelledLeave.body.find((row) => row.request_id === leave.request_id).status, "cancelled");
+  results.push({ scenario: "employee-cancels-approved-leave", status: "PASS" });
+
   const overtimeReason = `Browser manager overtime ${Date.now()}`;
   await submitOvertime(user.page, overtimeReason, testDates.managerOvertime);
   const overtimeRows = await api(user.page, "overtime-requests");
