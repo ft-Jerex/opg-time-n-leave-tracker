@@ -19,7 +19,13 @@ import {
   X,
 } from "lucide-react";
 import { api } from "./lib/api";
+import { completedRecordedSeconds } from "./lib/attendance";
 import { Button } from "./components/ui/button";
+import {
+  monthDateForTimeZone,
+  monthGrid,
+  weekdayLabels,
+} from "./lib/calendar";
 import {
   Card,
   CardContent,
@@ -90,6 +96,7 @@ const sessionSeconds = (session, end = Date.now()) => {
   const finish = session.clock_out_at
     ? new Date(session.clock_out_at).getTime()
     : end;
+  if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
   return Math.max(0, Math.floor((finish - start) / 1000));
 };
 const roleFor = (user) =>
@@ -531,6 +538,7 @@ function Dashboard({
       (item) =>
         item.employee_id === employee?.employee_id &&
         item.status === "closed" &&
+        Boolean(item.clock_out_at) &&
         new Intl.DateTimeFormat("en-CA", {
           timeZone: tenant?.timezone || "UTC",
           year: "numeric",
@@ -543,7 +551,17 @@ function Dashboard({
     .reduce((sum, item) => sum + sessionSeconds(item), 0);
   const todaySeconds =
     Math.max(todayMinutes * 60, todayClosedSessionSeconds) + elapsedSeconds;
-  const worked = summaries.reduce((sum, item) => sum + item.worked_mins, 0);
+  const jobProfile = data["job-profile"];
+  const dailyLimitMins =
+    jobProfile && !jobProfile.is_ot_eligible && jobProfile.max_daily_mins !== null
+      ? Number(jobProfile.max_daily_mins)
+      : null;
+  const recordedSeconds = completedRecordedSeconds({
+    summaryMinutes: todayMinutes,
+    closedSessionSeconds: todayClosedSessionSeconds,
+    isOvertimeEligible: Boolean(jobProfile?.is_ot_eligible),
+    maxDailyMins: jobProfile?.max_daily_mins,
+  });
   return (
     <div className="space-y-6">
       <div className="rounded-2xl bg-gradient-to-br from-[#3b160d] to-[#8c2414] p-6 text-white shadow-xl sm:p-8">
@@ -576,6 +594,9 @@ function Dashboard({
               {open
                 ? ` · active since ${new Intl.DateTimeFormat("en", { timeStyle: "short", timeZone: tenant?.timezone || "UTC" }).format(new Date(open.clock_in_at))}`
                 : " · currently clocked out"}
+              {dailyLimitMins !== null
+                ? ` · daily limit ${formatDuration(dailyLimitMins * 60)}`
+                : ""}
               </p>
             </div>
           </div>
@@ -599,7 +620,7 @@ function Dashboard({
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          [formatDuration(worked * 60 + elapsedSeconds), "Recorded hours"],
+          [formatDuration(recordedSeconds), "Recorded hours"],
           [
             balances.reduce((sum, b) => sum + b.remaining, 0),
             "Leave remaining",
@@ -659,7 +680,7 @@ function Dashboard({
   );
 }
 
-function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvertime }) {
+function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvertime, tenant }) {
   const [modal, setModal] = useState(false);
   const [view, setView] = useState("calendar");
   const [query, setQuery] = useState("");
@@ -762,10 +783,14 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
   );
   const pageCount = Math.max(1, Math.ceil(summaries.length / pageSize));
   const visibleSummaries = summaries.slice((page - 1) * pageSize, page * pageSize);
-  const calendarDate = new Date();
-  calendarDate.setMonth(calendarDate.getMonth() + monthOffset, 1);
+  const calendarDate = monthDateForTimeZone(tenant?.timezone, monthOffset);
   const calendarKey = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}`;
-  const daysInMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0).getDate();
+  const { daysInMonth, leadingDays } = monthGrid(
+    calendarDate.getFullYear(),
+    calendarDate.getMonth(),
+    tenant?.week_start,
+  );
+  const calendarWeekdays = weekdayLabels(tenant?.week_start);
   const monthLabel = calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" });
   const resetFilters = () => { setQuery(""); setStatusFilter("all"); setPage(1); };
   return (
@@ -782,7 +807,7 @@ function Attendance({ data, employee, refresh, notify, canWrite, canRequestOvert
             <label className="text-sm font-semibold">Status<select aria-label="Attendance status filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option>{["complete","below_standard","missing_punch","absent","leave","holiday"].map((value) => <option key={value} value={value}>{human(value)}</option>)}</select></label>
             <div className="flex gap-2"><Button variant={view === "calendar" ? "secondary" : "outline"} onClick={() => setView("calendar")}>Month</Button><Button variant={view === "table" ? "secondary" : "outline"} onClick={() => setView("table")}>Table</Button><Button variant="ghost" onClick={resetFilters}>Clear filters</Button></div>
           </div>
-          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{monthLabel}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label={`${monthLabel} attendance calendar`}>{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const row = data["attendance-summaries"].find((item) => item.employee_id === employee?.employee_id && item.local_date === localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${row && row.status !== "complete" ? "border-red-300 bg-red-50 text-red-800" : row ? "bg-emerald-50 text-emerald-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{row ? `${row.worked_mins}m · ${human(row.status)}` : "No record"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b">{["Date","Worked","Scheduled","Overtime","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleSummaries.map((item) => <tr className="border-b" key={item.summary_id}><td className="p-3">{date(item.local_date)}</td><td className="p-3">{item.worked_mins} min</td><td className="p-3">{item.scheduled_mins} min</td><td className="p-3">{item.overtime_mins} min</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleSummaries.length && <Empty title="No attendance matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={pageCount} pageSize={pageSize} total={summaries.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
+          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{monthLabel}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label={`${monthLabel} attendance calendar`}>{calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const row = data["attendance-summaries"].find((item) => item.employee_id === employee?.employee_id && item.local_date === localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${row && row.status !== "complete" ? "border-red-300 bg-red-50 text-red-800" : row ? "bg-emerald-50 text-emerald-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{row ? `${row.worked_mins}m · ${human(row.status)}` : "No record"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b">{["Date","Worked","Scheduled","Overtime","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleSummaries.map((item) => <tr className="border-b" key={item.summary_id}><td className="p-3">{date(item.local_date)}</td><td className="p-3">{item.worked_mins} min</td><td className="p-3">{item.scheduled_mins} min</td><td className="p-3">{item.overtime_mins} min</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleSummaries.length && <Empty title="No attendance matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={pageCount} pageSize={pageSize} total={summaries.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
       {canRequestOvertime ? <OvertimeRequest data={data} employee={employee} refresh={refresh} notify={notify} /> : null}
@@ -1928,10 +1953,15 @@ function TeamCalendar({ data, user }) {
   if (error) return <ErrorState message={error} retry={load} />;
   if (!rows) return <Loading />;
   const names = new Map(data.employees.map((item) => [item.employee_id, item.name]));
-  return <TeamCalendarView rows={rows} names={names} />;
+  return <TeamCalendarView
+    rows={rows}
+    names={names}
+    weekStart={data.tenants[0]?.week_start}
+    timeZone={data.tenants[0]?.timezone}
+  />;
 }
 
-function TeamCalendarView({ rows, names }) {
+function TeamCalendarView({ rows, names, weekStart, timeZone }) {
   const [includePending, setIncludePending] = useState(false);
   const [view, setView] = useState("month");
   const [query, setQuery] = useState("");
@@ -1941,10 +1971,14 @@ function TeamCalendarView({ rows, names }) {
     .filter((item) => statuses.includes(item.status))
     .filter((item) => `${names.get(item.employee_id)} ${item.leave_type_id} ${item.reason}`.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
-  const calendarDate = new Date();
-  calendarDate.setMonth(calendarDate.getMonth() + monthOffset, 1);
+  const calendarDate = monthDateForTimeZone(timeZone, monthOffset);
   const calendarKey = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}`;
-  const daysInMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0).getDate();
+  const { daysInMonth, leadingDays } = monthGrid(
+    calendarDate.getFullYear(),
+    calendarDate.getMonth(),
+    weekStart,
+  );
+  const calendarWeekdays = weekdayLabels(weekStart);
   return (
     <div className="space-y-5">
       <Header
@@ -1961,7 +1995,7 @@ function TeamCalendarView({ rows, names }) {
           </label>
         }
       />
-      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
+      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
     </div>
   );
 }
@@ -4101,6 +4135,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
         notify={notify}
         canWrite={canClock}
         canRequestOvertime={user.capabilities.includes("overtime-requests:write")}
+        tenant={tenant}
       />
     );
   else if (page === "leave")
