@@ -4,6 +4,8 @@ import {
   AlertCircle,
   CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Clock3,
   Filter,
@@ -19,12 +21,18 @@ import {
   X,
 } from "lucide-react";
 import { api } from "./lib/api";
-import { completedRecordedSeconds } from "./lib/attendance";
+import { weeklyCompletedSeconds } from "./lib/attendance";
 import { Button } from "./components/ui/button";
 import {
+  addLocalDays,
+  isWeekendDate,
+  localDateForTimeZone,
   monthDateForTimeZone,
   monthGrid,
   weekdayLabels,
+  workWeekDates,
+  workWeekLabel,
+  workWeekStart,
 } from "./lib/calendar";
 import {
   Card,
@@ -491,6 +499,308 @@ function Modal({ title, close, children }) {
   );
 }
 
+const calendarMonthForDate = (localDate) => {
+  const [year, month] = localDate.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+};
+
+function WorkWeekDatePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() =>
+    calendarMonthForDate(value),
+  );
+  const containerRef = useRef(null);
+  const selectedWeekStart = workWeekStart(value);
+  const selectedWeekEnd = addLocalDays(selectedWeekStart, 4);
+  const year = visibleMonth.getFullYear();
+  const month = visibleMonth.getMonth();
+  const { daysInMonth, leadingDays } = monthGrid(year, month, 1);
+  const monthLabel = new Intl.DateTimeFormat("en", {
+    month: "long",
+    year: "numeric",
+  }).format(visibleMonth);
+  const selectedDateLabel = new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00Z`));
+
+  useEffect(() => {
+    if (open) setVisibleMonth(calendarMonthForDate(value));
+  }, [open, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event) => {
+      if (!containerRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <CalendarDays className="h-4 w-4" />
+        {selectedDateLabel}
+      </Button>
+      {open && (
+        <div
+          className="absolute left-1/2 z-20 mt-2 w-[19rem] -translate-x-1/2 rounded-xl border bg-white p-3 text-foreground shadow-xl"
+          role="dialog"
+          aria-label="Choose a work week"
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous month"
+              onClick={() =>
+                setVisibleMonth((current) =>
+                  new Date(current.getFullYear(), current.getMonth() - 1, 1),
+                )
+              }
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <b className="text-sm">{monthLabel}</b>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next month"
+              onClick={() =>
+                setVisibleMonth((current) =>
+                  new Date(current.getFullYear(), current.getMonth() + 1, 1),
+                )
+              }
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {weekdayLabels(1).map((day) => (
+              <span
+                className="py-1 text-center text-[11px] font-semibold text-muted-foreground"
+                key={day}
+              >
+                {day}
+              </span>
+            ))}
+            {Array.from({ length: leadingDays }, (_, index) => (
+              <span aria-hidden="true" key={`blank-${index}`} />
+            ))}
+            {Array.from({ length: daysInMonth }, (_, index) => {
+              const localDate = `${year}-${String(month + 1).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`;
+              const weekend = isWeekendDate(localDate);
+              const inSelectedWeek =
+                localDate >= selectedWeekStart && localDate <= selectedWeekEnd;
+              return (
+                <button
+                  type="button"
+                  disabled={weekend}
+                  aria-label={
+                    weekend
+                      ? `${date(localDate)}, weekend unavailable`
+                      : `Select the week containing ${date(localDate)}`
+                  }
+                  className={`h-9 rounded-md text-sm transition-colors ${
+                    weekend
+                      ? "cursor-not-allowed text-muted-foreground/35"
+                      : inSelectedWeek
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                        : "hover:bg-muted"
+                  }`}
+                  key={localDate}
+                  onClick={() => {
+                    onChange(localDate);
+                    setOpen(false);
+                  }}
+                >
+                  {index + 1}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">
+            Saturdays and Sundays are unavailable.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WeeklyRecordedHours({ data, employee, tenant }) {
+  const timeZone = tenant?.timezone || "UTC";
+  const [selectedDate, setSelectedDate] = useState(() =>
+    localDateForTimeZone(timeZone),
+  );
+  const [weekResult, setWeekResult] = useState({ key: "", items: [] });
+  const [loadingKey, setLoadingKey] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const dates = useMemo(() => workWeekDates(selectedDate), [selectedDate]);
+  const from = dates[0];
+  const to = dates[4];
+  const employeeId = employee?.employee_id;
+  const weekKey = `${employeeId || "none"}:${from}:${to}`;
+  const cachedRows = useMemo(
+    () =>
+      data["attendance-summaries"].filter(
+        (item) =>
+          item.employee_id === employeeId &&
+          item.local_date >= from &&
+          item.local_date <= to,
+      ),
+    [data, employeeId, from, to],
+  );
+
+  useEffect(() => {
+    setSelectedDate(localDateForTimeZone(timeZone));
+  }, [employeeId, timeZone]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWeekResult({ key: weekKey, items: cachedRows });
+    setLoadError("");
+    if (!employeeId) return () => {
+      cancelled = true;
+    };
+    setLoadingKey(weekKey);
+    api
+      .list("attendance-summaries", {
+        employee_id: employeeId,
+        from,
+        to,
+        limit: 100,
+        sort: "local_date",
+        direction: "asc",
+      })
+      .then((items) => {
+        if (!cancelled) setWeekResult({ key: weekKey, items });
+      })
+      .catch((error) => {
+        if (!cancelled)
+          setLoadError(error?.message || "The selected week could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled)
+          setLoadingKey((current) => (current === weekKey ? "" : current));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedRows, employeeId, from, to, weekKey]);
+
+  const summaries = weekResult.key === weekKey ? weekResult.items : cachedRows;
+  const jobProfile = data["job-profile"];
+  const weekly = weeklyCompletedSeconds({
+    dates,
+    summaries,
+    employeeId,
+    isOvertimeEligible: Boolean(jobProfile?.is_ot_eligible),
+    maxDailyMins: jobProfile?.max_daily_mins,
+  });
+  const dayLabel = (localDate) =>
+    new Intl.DateTimeFormat("en", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }).format(new Date(`${localDate}T00:00:00Z`));
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Recorded hours</CardTitle>
+            <CardDescription>
+              Completed hours from Monday through Friday. Open timer time is not included.
+            </CardDescription>
+          </div>
+          {loadingKey === weekKey && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Loading
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded-xl border bg-muted/25 p-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Previous week"
+            onClick={() => setSelectedDate((current) => addLocalDays(current, -7))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex min-w-0 flex-col items-center gap-2 text-center">
+            <p className="text-base font-bold sm:text-lg">{workWeekLabel(selectedDate)}</p>
+            <WorkWeekDatePicker value={selectedDate} onChange={setSelectedDate} />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Next week"
+            onClick={() => setSelectedDate((current) => addLocalDays(current, 7))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+          <div className="flex min-w-[12rem] flex-col justify-center rounded-xl bg-[#3b160d] p-5 text-white">
+            <p className="text-xs font-bold uppercase tracking-[.14em] text-orange-200">
+              Weekly total
+            </p>
+            <p className="mt-1 font-mono text-3xl font-extrabold">
+              {formatDuration(weekly.totalSeconds)}
+            </p>
+          </div>
+          <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-5">
+            {weekly.days.map((day) => (
+              <div className="rounded-xl border p-3" key={day.localDate}>
+                <p className="text-xs font-semibold text-muted-foreground">
+                  {dayLabel(day.localDate)}
+                </p>
+                <p className="mt-1 font-mono text-lg font-bold">
+                  {formatDuration(day.seconds)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+        {loadError && (
+          <p className="flex items-center gap-2 text-sm text-amber-700" role="status">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {loadError} Showing the attendance records already loaded on this page.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Dashboard({
   data,
   employee,
@@ -556,12 +866,6 @@ function Dashboard({
     jobProfile && !jobProfile.is_ot_eligible && jobProfile.max_daily_mins !== null
       ? Number(jobProfile.max_daily_mins)
       : null;
-  const recordedSeconds = completedRecordedSeconds({
-    summaryMinutes: todayMinutes,
-    closedSessionSeconds: todayClosedSessionSeconds,
-    isOvertimeEligible: Boolean(jobProfile?.is_ot_eligible),
-    maxDailyMins: jobProfile?.max_daily_mins,
-  });
   return (
     <div className="space-y-6">
       <div className="rounded-2xl bg-gradient-to-br from-[#3b160d] to-[#8c2414] p-6 text-white shadow-xl sm:p-8">
@@ -618,9 +922,8 @@ function Dashboard({
           )}
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         {[
-          [formatDuration(recordedSeconds), "Recorded hours"],
           [
             balances.reduce((sum, b) => sum + b.remaining, 0),
             "Leave remaining",
@@ -644,6 +947,7 @@ function Dashboard({
           </Card>
         ))}
       </div>
+      <WeeklyRecordedHours data={data} employee={employee} tenant={tenant} />
       <Card>
         <CardHeader>
           <CardTitle>Recent attendance</CardTitle>
@@ -996,7 +1300,7 @@ function OvertimeRequest({ data, employee, refresh, notify }) {
   </>;
 }
 
-function Leave({ data, employee, refresh, notify, canWrite }) {
+function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   // HR can load tenant-wide data for team and organization workspaces, but
   // this page is the signed-in employee's personal leave workspace.
   const personalBalances = data["leave-balances"].filter(
@@ -1173,10 +1477,14 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
     .sort((left, right) => right.start_date.localeCompare(left.start_date));
   const leavePageCount = Math.max(1, Math.ceil(leaveRows.length / pageSize));
   const visibleLeaveRows = leaveRows.slice((page - 1) * pageSize, page * pageSize);
-  const leaveCalendarDate = new Date();
-  leaveCalendarDate.setMonth(leaveCalendarDate.getMonth() + monthOffset, 1);
+  const leaveCalendarDate = monthDateForTimeZone(tenant?.timezone, monthOffset);
   const leaveCalendarKey = `${leaveCalendarDate.getFullYear()}-${String(leaveCalendarDate.getMonth() + 1).padStart(2, "0")}`;
-  const leaveDays = new Date(leaveCalendarDate.getFullYear(), leaveCalendarDate.getMonth() + 1, 0).getDate();
+  const { daysInMonth: leaveDays, leadingDays: leaveLeadingDays } = monthGrid(
+    leaveCalendarDate.getFullYear(),
+    leaveCalendarDate.getMonth(),
+    tenant?.week_start,
+  );
+  const leaveCalendarWeekdays = weekdayLabels(tenant?.week_start);
   return (
     <div className="space-y-5">
       <Header
@@ -1191,7 +1499,7 @@ function Leave({ data, employee, refresh, notify, canWrite }) {
       <Card>
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><Field label="Search leave" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><label className="text-sm font-semibold">Status<select aria-label="Leave status filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option>{["pending","approved","rejected","withdrawn","cancelled"].map((value) => <option key={value} value={value}>{human(value)}</option>)}</select></label><div className="flex gap-2"><Button variant={view === "calendar" ? "secondary" : "outline"} onClick={() => setView("calendar")}>Month</Button><Button variant={view === "table" ? "secondary" : "outline"} onClick={() => setView("table")}>List</Button><Button variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setPage(1); }}>Clear filters</Button></div></div>
-          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{item.chargeable_amount}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
+          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{item.chargeable_amount}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
       {personalBalances.length ? (
@@ -4146,6 +4454,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
         refresh={refresh}
         notify={notify}
         canWrite={canRequestLeave}
+        tenant={tenant}
       />
     );
   else if (page === "holidays")
