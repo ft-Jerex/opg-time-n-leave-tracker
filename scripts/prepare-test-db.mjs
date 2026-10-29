@@ -19,19 +19,20 @@ const compose = spawnSync(
 );
 if (compose.status !== 0) process.exit(compose.status ?? 1);
 
-const connection = new pg.Client({
-  connectionString: process.env.TEST_DATABASE_URL,
-});
 for (let attempt = 0; attempt < 30; attempt += 1) {
+  const connection = new pg.Client({
+    connectionString: process.env.TEST_DATABASE_URL,
+  });
   try {
     await connection.connect();
+    await connection.end();
     break;
   } catch (error) {
+    await connection.end().catch(() => {});
     if (attempt === 29) throw error;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 }
-await connection.end();
 const env = {
   ...process.env,
   DATABASE_URL: process.env.TEST_DATABASE_URL,

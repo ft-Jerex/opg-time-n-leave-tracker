@@ -110,6 +110,27 @@ const assertDomainInvariants = async (
         "An active job profile with this title, department, and effective date already exists.",
       );
   }
+  if (resource === "job-leave-policies") {
+    const resetFrequency = payload.accrual_rule?.reset_frequency ?? "annually";
+    if (!["annually", "monthly"].includes(resetFrequency))
+      throw new HttpError(
+        422,
+        "Invalid Reset Frequency",
+        "Balance reset frequency must be annually or monthly.",
+      );
+    if (resetFrequency === "monthly" && payload.accrual_rule?.type !== "monthly")
+      throw new HttpError(
+        422,
+        "Incompatible Reset Frequency",
+        "Monthly balance resets require a monthly accrual policy.",
+      );
+    if (payload.annual_allotment < 0 || payload.carry_over_limit < 0)
+      throw new HttpError(
+        422,
+        "Invalid Leave Allowance",
+        "Annual allowance and carry-over limit cannot be negative.",
+      );
+  }
   if (resource === "job-leave-policies" && payload.status === "active") {
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       `policy:${tenantId}:${payload.job_id}:${payload.leave_type_id}`,

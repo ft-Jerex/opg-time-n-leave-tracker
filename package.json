@@ -12,6 +12,7 @@
     "migrate": "node database/migrate.js",
     "db:migrate": "node database/migrate.js",
     "db:seed": "node database/seeders/seed.js",
+    "platform-admin:create": "node scripts/create-platform-admin.mjs",
     "db:reset": "docker compose down -v",
     "db:test:prepare": "node scripts/prepare-test-db.mjs",
     "test:unit": "node --test tests/unit/**/*.test.js",

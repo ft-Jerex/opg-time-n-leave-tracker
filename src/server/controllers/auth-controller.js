@@ -117,8 +117,9 @@ export const me = async (req) => {
       throw new HttpError(401, "Unauthenticated", "The session user no longer exists.");
     return {
       ...result.rows[0],
+      capabilities: req.actor.capabilities,
       actor_kind: "platform",
-      roles: ["Platform Administrator"],
+      roles: req.actor.roles || ["Platform Administrator"],
       active_tenant_id: req.actor.tenant_id,
       tenant_id: req.actor.tenant_id,
       employee_id: req.actor.employee_id,
@@ -160,7 +161,7 @@ export const context = async (req, res) => {
     [req.actor.platform_user_id || req.actor.user_id, tenantId],
   );
   if (tenantId !== null && !result.rowCount)
-    throw new HttpError(403, "Forbidden", "The platform administrator is not assigned to that tenant.");
+    throw new HttpError(403, "Forbidden", "The organization is not available to this platform administrator.");
   // A null tenant_id means the platform administrator is exiting the active
   // organization. Keep the membership list for the platform overview, but do
   // not select the first membership as a new active tenant.
@@ -170,15 +171,20 @@ export const context = async (req, res) => {
     tenant_id: membership?.tenant_id || null,
     active_tenant_id: membership?.tenant_id || null,
     actor_kind: "platform",
-    display_name: membership?.display_name || req.actor.display_name,
-    email: membership?.email || req.actor.email,
+    display_name: req.actor.display_name,
+    email: req.actor.email,
     employee_id: membership?.employee_id || null,
-    capabilities: effectiveCapabilities(membership?.capabilities || req.actor.capabilities),
+    capabilities: effectiveCapabilities([
+      ...(req.actor.platform_capabilities || req.actor.capabilities),
+      ...(membership?.capabilities || []),
+    ]),
   };
   res.cookie("tlt_session", issueSession(actor), cookieOptions());
   return {
     ...actor,
-    roles: membership?.roles || ["Platform Administrator"],
+    roles: membership
+      ? [...new Set(["Platform Administrator", ...(membership.roles || []), "HR Manager"])]
+      : ["Platform Administrator"],
     memberships: result.rows,
     csrf_token: req.cookies?.tlt_csrf || null,
   };

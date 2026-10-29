@@ -65,16 +65,20 @@ export const requireAuth = async (req, _res, next) => {
         );
         tenantActor = tenantResult.rows[0];
       }
-      const capabilities = effectiveCapabilities(tenantActor?.capabilities || platform.capabilities);
+      const capabilities = effectiveCapabilities([
+        ...platform.capabilities,
+        ...(tenantActor?.capabilities || []),
+      ]);
       req.actor = {
         ...platform,
         tenant_id: platform.active_tenant_id || null,
         employee_id: tenantActor?.employee_id || null,
         user_id: platform.tenant_user_id || platform.user_id,
         capabilities,
+        platform_capabilities: platform.capabilities,
         roles: platform.roles || ["Platform Administrator"],
         actor_kind: "platform",
-        actor_role: platform.active_tenant_id ? "hr_manager" : "platform_admin",
+        actor_role: "platform_admin",
         platform_user_id: platform.user_id,
       };
       return next();

@@ -17,6 +17,12 @@
 6. Verify `schema_migrations` checksums and run integration tests against staging.
 7. Seed only local or explicitly approved staging databases. Never set `ALLOW_DEV_SEED` in Production.
 
+## Create the platform administrator
+
+After migrations, create the single platform administrator once from a trusted workstation or protected CI job. Set `PLATFORM_ADMIN_DISPLAY_NAME`, `PLATFORM_ADMIN_EMAIL`, and a unique `PLATFORM_ADMIN_PASSWORD` of at least 12 characters, then run `npm run platform-admin:create`. The command refuses to create a second platform administrator or reuse a tenant email. It creates one global credential and grants access to every existing organization; organizations created later are connected automatically. Remove `PLATFORM_ADMIN_PASSWORD` from the environment immediately afterward.
+
+The platform administrator signs in once, selects an organization from the platform overview, and can exit back to the organization picker. Do not share this human account among multiple people; “single account” means one credential works across tenants, not that multiple administrators should share a password.
+
 The runtime uses `DB_SSL=true`, certificate verification, and `DB_POOL_MAX=1`. The migration connection is not used by the Vercel function.
 
 ## Vercel setup

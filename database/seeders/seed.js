@@ -210,7 +210,7 @@ const seed = async () => {
       `INSERT INTO platform_users (platform_user_id,display_name,email,capabilities,status) VALUES ('platform-admin','Maya Patel','admin@dev.local',ARRAY['platform:read','platform:write','organizations:write','access:write','platform-audit:read'],'active')`,
     );
     await client.query(
-      `INSERT INTO platform_memberships (platform_user_id,tenant_id,tenant_user_id,roles,status) VALUES ('platform-admin','northstar','usr-admin',ARRAY['Employee','HR Manager'],'active'),('platform-admin','harbor','usr-harbor',ARRAY['Employee','HR Manager'],'active')`,
+      `INSERT INTO platform_memberships (platform_user_id,tenant_id,tenant_user_id,roles,status) VALUES ('platform-admin','northstar','usr-admin',ARRAY['Platform Administrator','HR Manager'],'active'),('platform-admin','harbor','usr-harbor',ARRAY['Platform Administrator','HR Manager'],'active')`,
     );
     await client.query(
       `INSERT INTO platform_credentials (platform_user_id,email,password_hash) VALUES ('platform-admin','admin@dev.local',$1)`,

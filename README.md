@@ -26,13 +26,15 @@ Development credentials are configured through `SEED_ADMIN_PASSWORD`, `SEED_HR_P
 | `user@dev.local`     | Operational user     |
 | `readonly@dev.local` | Read-only user       |
 
-Passwords are read from the seed-password variables; development-only examples are in `.env.example`. Sessions use HttpOnly cookies and CSRF protection. The platform administrator must explicitly enter a tenant before accessing organization data. Organizations can self-register publicly or be provisioned by the platform administrator. HR managers create employee portal users through a one-time invitation link that can be copied and shared manually; no email service is required, and the client retains only a non-sensitive session-presence hint locally.
+Passwords are read from the seed-password variables; development-only examples are in `.env.example`. Sessions use HttpOnly cookies and CSRF protection. The platform administrator has one global email/password, chooses an organization after login, and automatically receives access to organizations added later. No tenant-specific platform password is created. Organizations can self-register publicly or be provisioned by the platform administrator. HR managers create employee portal users through a one-time invitation link that can be copied and shared manually; no email service is required, and the client retains only a non-sensitive session-presence hint locally.
 
 HR administrators can manage Departments and the Employee Directory, provision portal accounts through one-time copyable invitation links, update reporting assignments, generate one-time password-reset links without seeing passwords, export filtered audit CSV, and generate tenant-wide payroll-preparation summaries. Payroll exports include worked minutes, overtime, approved paid leave, and approved unpaid leave for the selected date range; they do not execute payroll.
 
 Docker exposes development PostgreSQL on port `55432` and isolated test PostgreSQL on `55433`, avoiding conflicts with native Windows installations. Run `npm run db:test:prepare` after creating `.env` to prepare the integration database.
 
 ## Commands
+
+Run `npm run platform-admin:create` once to create the staging or production platform administrator from protected `PLATFORM_ADMIN_*` environment inputs. The command is not a development seed and refuses to create a second platform administrator.
 
 - `npm run dev` — start client and server.
 - `npm run db:migrate` — apply checksum-verified migrations.

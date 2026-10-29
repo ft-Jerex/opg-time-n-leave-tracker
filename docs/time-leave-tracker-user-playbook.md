@@ -151,10 +151,12 @@ Platform administrators manage organizations, not daily employee requests.
 
 ### Manage an organization
 
-1. Open **Overview** in the Platform workspace.
+1. Sign in with the single platform administrator email and password, then open **Overview** in the Platform workspace.
 2. Select **Create organization** to add an organization and its first HR administrator.
 3. Use **Edit**, **Suspend**, **Reactivate**, or **Resend invite** when needed.
 4. Select **Enter organization** before viewing that organization's data. Exit when finished.
+
+The same platform administrator login works for every organization. Newly registered or provisioned organizations appear automatically; no additional platform password or manual tenant assignment is needed.
 
 Use **Access & Roles** to review assignments, **Audit Log** to review platform changes, and **Settings** to maintain organization defaults and alert limits.
 

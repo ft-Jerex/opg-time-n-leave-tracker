@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import 'dotenv/config';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,12 @@ const { pool } = await import('../src/server/config/database.js');
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 const files = (await readdir(dir)).filter((name) => /^\d+_.+\.sql$/.test(name)).sort();
-const checksum = (sql) => crypto.createHash('sha256').update(sql).digest('hex');
+// Git may check SQL files out with CRLF on Windows. Hash canonical LF content so
+// the same migration has the same ledger checksum on every deployment host.
+const checksum = (sql) => crypto
+  .createHash('sha256')
+  .update(sql.replace(/\r\n/g, '\n'))
+  .digest('hex');
 const client = await pool.connect();
 try {
   await client.query('BEGIN');

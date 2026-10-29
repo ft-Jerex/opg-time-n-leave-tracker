@@ -1,3 +1,4 @@
+import "dotenv/config";
 import test from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
@@ -407,7 +408,7 @@ test(
     assert.equal(passwordAudit.rowCount, 1);
     assert.deepEqual(passwordAudit.rows[0].metadata, { source: "profile" });
     const passwordReset = await admin
-      .post(`/api/v1/hr/directory/${invitedDirectory.body.employee_id}/reset-password`)
+      .post(`/api/v1/hr/directory/${invitedDirectory.body.employee.employee_id}/reset-password`)
       .set("x-csrf-token", context.body.csrf_token)
       .send({});
     assert.equal(passwordReset.status, 200);
@@ -460,6 +461,24 @@ test(
     const registeredDepartments = await registrationAgent.get("/api/v1/departments");
     assert.equal(registeredDepartments.status, 200);
     assert.equal(registeredDepartments.body[0].name, "General");
+    const registeredPlatformContext = await admin
+      .post("/api/v1/auth/context")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ tenant_id: registeredTenantId });
+    assert.equal(registeredPlatformContext.status, 200);
+    assert.equal(registeredPlatformContext.body.active_tenant_id, registeredTenantId);
+    assert.equal(registeredPlatformContext.body.email, "admin@dev.local");
+    assert.ok(registeredPlatformContext.body.roles.includes("Platform Administrator"));
+    assert.ok(registeredPlatformContext.body.roles.includes("HR Manager"));
+    assert.ok(registeredPlatformContext.body.capabilities.includes("users:write"));
+    assert.ok(registeredPlatformContext.body.capabilities.includes("platform:read"));
+    assert.equal((await admin.get("/api/v1/departments")).status, 200);
+    const refreshedPlatformContext = await admin.get("/api/v1/auth/me");
+    assert.equal(refreshedPlatformContext.body.active_tenant_id, registeredTenantId);
+    assert.ok(refreshedPlatformContext.body.roles.includes("Platform Administrator"));
+    assert.ok(refreshedPlatformContext.body.roles.includes("HR Manager"));
+    assert.ok(refreshedPlatformContext.body.capabilities.includes("users:write"));
+    assert.ok(refreshedPlatformContext.body.capabilities.includes("platform:read"));
     const duplicateRegistration = await request(app)
       .post("/api/v1/auth/register-tenant")
       .send({
@@ -493,6 +512,8 @@ test(
       .set("x-csrf-token", context.body.csrf_token)
       .send({ tenant_id: null });
     assert.equal(provisioned.status, 200);
+    assert.ok(provisioned.body.capabilities.includes("platform:read"));
+    assert.equal(provisioned.body.capabilities.includes("users:write"), false);
     const provision = await admin
       .post("/api/v1/platform/tenants")
       .set("x-csrf-token", provisioned.body.csrf_token)
@@ -567,7 +588,7 @@ test(
     );
     assert.deepEqual(
       platformAudit.rows.map(({ action }) => action),
-      ["tenant_created", "tenant_invitation_created", "tenant_updated", "tenant_suspended", "tenant_reactivated"],
+      ["tenant_created", "tenant_invitation_created", "tenant_invitation_link_generated", "tenant_updated", "tenant_suspended", "tenant_reactivated"],
     );
     const platformPassword = "Platform-Profile-password-2026!";
     const platformPasswordChanged = await admin

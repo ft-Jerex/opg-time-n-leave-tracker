@@ -5,6 +5,7 @@ const { Pool } = pg;
 const sslCa = process.env.DB_SSL_CA_BASE64
   ? Buffer.from(process.env.DB_SSL_CA_BASE64, "base64").toString("utf8")
   : process.env.DB_SSL_CA?.replaceAll("\\n", "\n");
+const hasExplicitSslConfig = process.env.DB_SSL === "true";
 
 // node-postgres gives SSL query parameters in DATABASE_URL precedence over the
 // explicit `ssl` object below. That would silently discard DB_SSL_CA. Keep
@@ -13,7 +14,7 @@ const sslCa = process.env.DB_SSL_CA_BASE64
 const connectionUrl = process.env.DATABASE_URL
   ? new URL(process.env.DATABASE_URL)
   : null;
-if (connectionUrl) {
+if (connectionUrl && hasExplicitSslConfig) {
   for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) {
     connectionUrl.searchParams.delete(parameter);
   }
@@ -29,7 +30,7 @@ export const pool = new Pool({
   idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
   statement_timeout: Number(process.env.DB_STATEMENT_TIMEOUT_MS || 15000),
   ssl:
-    process.env.DB_SSL === "true"
+    hasExplicitSslConfig
       ? {
           rejectUnauthorized:
             process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false",

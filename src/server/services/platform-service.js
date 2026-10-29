@@ -77,6 +77,20 @@ export const hrCapabilities = [
   "holidays:write", "alerts:write",
 ];
 
+const grantPlatformAdministratorsTenantAccess = async (client, tenantId, tenantUserId) => {
+  await client.query(
+    `INSERT INTO platform_memberships
+      (platform_user_id,tenant_id,tenant_user_id,roles,status)
+     SELECT platform_user_id,$1,$2,ARRAY['Platform Administrator','HR Manager'],'active'
+       FROM platform_users
+      WHERE status='active'
+     ON CONFLICT (platform_user_id,tenant_id) DO UPDATE
+       SET roles=EXCLUDED.roles,
+           status='active'`,
+    [tenantId, tenantUserId],
+  );
+};
+
 const invitationUrl = (req, token) => {
   const base = (process.env.INVITATION_BASE_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
   return `${base}/#/accept-invitation?token=${encodeURIComponent(token)}`;
@@ -198,6 +212,10 @@ export const provisionTenantDefaults = async (client, { tenantId, organization, 
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [ids.user, tenantId, ids.employee, adminName, adminEmail, hrCapabilities, status],
   );
+  // A platform login is global. Keep the tenant-user mapping internal so the
+  // existing tenant-scoped SQL and audit constraints remain enforced without
+  // creating another password for the platform administrator.
+  await grantPlatformAdministratorsTenantAccess(client, tenantId, ids.user);
   return { ...ids, settings };
 };
 
@@ -284,11 +302,6 @@ export const createTenant = async (req) => {
       adminEmail,
       active: false,
     });
-    await client.query(
-      `INSERT INTO platform_memberships (platform_user_id,tenant_id,tenant_user_id,roles,status)
-       VALUES ($1,$2,$3,ARRAY['Platform Administrator','HR Manager'],'active')`,
-      [platformUserId, tenantId, ids.user],
-    );
     await client.query(
       `INSERT INTO tenant_invitations (invite_id,tenant_id,user_id,email,token_hash,expires_at,created_at,created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

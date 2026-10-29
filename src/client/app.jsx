@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api";
 import { weeklyCompletedSeconds } from "./lib/attendance";
+import { formatLeaveAmount } from "./lib/leave";
 import { Button } from "./components/ui/button";
 import {
   addLocalDays,
@@ -925,7 +926,9 @@ function Dashboard({
       <div className="grid gap-4 sm:grid-cols-3">
         {[
           [
-            balances.reduce((sum, b) => sum + b.remaining, 0),
+            formatLeaveAmount(
+              balances.reduce((sum, b) => sum + Number(b.remaining), 0),
+            ),
             "Leave remaining",
           ],
           [
@@ -1499,7 +1502,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
       <Card>
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><Field label="Search leave" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><label className="text-sm font-semibold">Status<select aria-label="Leave status filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option>{["pending","approved","rejected","withdrawn","cancelled"].map((value) => <option key={value} value={value}>{human(value)}</option>)}</select></label><div className="flex gap-2"><Button variant={view === "calendar" ? "secondary" : "outline"} onClick={() => setView("calendar")}>Month</Button><Button variant={view === "table" ? "secondary" : "outline"} onClick={() => setView("table")}>List</Button><Button variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setPage(1); }}>Clear filters</Button></div></div>
-          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{item.chargeable_amount}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
+          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{formatLeaveAmount(item.chargeable_amount)}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
       {personalBalances.length ? (
@@ -1511,20 +1514,20 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                   {typeName(item.leave_type_id)}
                 </p>
                 <p className="mt-1 text-3xl font-extrabold">
-                  {item.remaining}{" "}
+                  {formatLeaveAmount(item.remaining)}{" "}
                   <span className="text-base font-medium">{item.unit}</span>
                 </p>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {item.pending} pending · {item.used} used
+                  {formatLeaveAmount(item.pending)} pending · {formatLeaveAmount(item.used)} used
                 </p>
                 <details className="mt-4 text-sm">
                   <summary className="cursor-pointer font-semibold text-primary">
                     Balance details and ledger
                   </summary>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <Row label="Accrued" value={item.accrued} />
-                    <Row label="Carried over" value={item.carried_over} />
-                    <Row label="Manual" value={item.manual_adjustments} />
+                    <Row label="Accrued" value={formatLeaveAmount(item.accrued)} />
+                    <Row label="Carried over" value={formatLeaveAmount(item.carried_over)} />
+                    <Row label="Manual" value={formatLeaveAmount(item.manual_adjustments)} />
                     <Row label="As of" value={date(item.as_of)} />
                   </div>
                   <div className="mt-3 divide-y">
@@ -1537,7 +1540,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                       .map((entry) => (
                         <div key={entry.entry_id} className="py-2">
                           <b>
-                            {human(entry.entry_type)} · {entry.amount}
+                            {human(entry.entry_type)} · {formatLeaveAmount(entry.amount)}
                           </b>
                           <p className="text-xs text-muted-foreground">
                             {date(entry.effective_date)} · {entry.reason}
@@ -1573,7 +1576,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                     <small className="block text-muted-foreground">
                       {date(item.start_date)} – {date(item.end_date)} ·{" "}
                       {item.partial_day === "custom_hours" ? `${item.partial_start_time?.slice(0, 5)}–${item.partial_end_time?.slice(0, 5)} · ` : ""}
-                      {item.chargeable_amount} unit(s) · {item.reason}
+                      {formatLeaveAmount(item.chargeable_amount)} unit(s) · {item.reason}
                     </small>
                   </span>
                   <div className="flex items-center gap-2">
@@ -1691,7 +1694,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                 {!form.start_date || !form.end_date || formErrors.dateRange || formErrors.end_date
                   ? "—"
                   : selectedBalance
-                  ? selectedBalance.remaining - projectedDays
+                  ? formatLeaveAmount(Number(selectedBalance.remaining) - projectedDays)
                   : "Unavailable"}
               </p>
             </div>
@@ -2035,7 +2038,7 @@ function Approvals({ data, refresh, notify }) {
                   <p className="text-sm font-bold text-primary">{human(item.kind)}</p>
                   <h2 className="mt-1">{item.employee?.name || "Unknown employee"}</h2>
                   <p className="text-sm">{item.reason || "No reason provided"}</p>
-                  {item.kind === "leave" ? <p className="text-sm text-muted-foreground">{item.leaveType?.name || "Leave"} · {date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount ?? "—"} day(s)</p> : null}
+                  {item.kind === "leave" ? <p className="text-sm text-muted-foreground">{item.leaveType?.name || "Leave"} · {date(item.start_date)} – {date(item.end_date)} · {formatLeaveAmount(item.chargeable_amount)} day(s)</p> : null}
                   {item.kind === "adjustment" ? <p className="text-sm text-muted-foreground">{date(item.local_date)} · Attendance correction</p> : null}
                   {item.kind === "overtime" ? <p className="text-sm text-muted-foreground">{date(item.local_date)} · {item.start_time.slice(0, 5)}–{item.end_time.slice(0, 5)} · {item.requested_mins} minutes</p> : null}
                 </div>
@@ -2070,7 +2073,7 @@ function Approvals({ data, refresh, notify }) {
             {selected.employee?.employee_number ? <p className="text-muted-foreground">{selected.employee.employee_number}</p> : null}
             <p className="mt-3"><b>Request:</b> {human(selected.kind)}</p>
             <p><b>Reason:</b> {selected.reason || "No reason provided"}</p>
-            {selected.kind === "leave" ? <p><b>Dates:</b> {date(selected.start_date)} – {date(selected.end_date)} · {selected.leaveType?.name || "Leave"} · {selected.chargeable_amount ?? "—"} day(s)</p> : null}
+            {selected.kind === "leave" ? <p><b>Dates:</b> {date(selected.start_date)} – {date(selected.end_date)} · {selected.leaveType?.name || "Leave"} · {formatLeaveAmount(selected.chargeable_amount)} day(s)</p> : null}
             {selected.kind === "adjustment" ? <p><b>Date:</b> {date(selected.local_date)}</p> : null}
             {selected.kind === "overtime" ? <p><b>Schedule:</b> {date(selected.local_date)} · {selected.start_time.slice(0, 5)}–{selected.end_time.slice(0, 5)} · {selected.requested_mins} minutes</p> : null}
           </div>
@@ -2303,7 +2306,7 @@ function TeamCalendarView({ rows, names, weekStart, timeZone }) {
           </label>
         }
       />
-      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {item.chargeable_amount} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
+      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {formatLeaveAmount(item.chargeable_amount)} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
     </div>
   );
 }
@@ -3302,7 +3305,7 @@ function Overrides({ data, refresh, notify, user }) {
               <b>Balance preview</b>
               <p className="mt-1">
                 {balance
-                  ? `${balance.remaining} → ${after} ${balance.unit}`
+                  ? `${formatLeaveAmount(balance.remaining)} → ${formatLeaveAmount(after)} ${balance.unit}`
                   : "No matching balance exists"}
               </p>
             </div>
@@ -3595,6 +3598,7 @@ function Reports({ data, tenant }) {
 }
 function Policies({ data, refresh, notify }) {
   const [modal, setModal] = useState(null);
+  const [editingPolicy, setEditingPolicy] = useState(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("active");
   const [leaveType, setLeaveType] = useState({
@@ -3610,6 +3614,7 @@ function Policies({ data, refresh, notify }) {
     leave_type_id: "",
     annual_allotment: 20,
     carry_over_limit: 5,
+    reset_frequency: "annually",
     allow_negative: false,
     allow_partial_day: true,
     effective_from: new Date().toISOString().slice(0, 10),
@@ -3641,22 +3646,71 @@ function Policies({ data, refresh, notify }) {
       notify(error.message, "error");
     }
   };
-  const createMapping = async (e) => {
+  const openCreateMapping = () => {
+    setEditingPolicy(null);
+    setMapping({
+      job_id: data["job-profiles"].find((item) => item.status === "active")?.job_id || "",
+      leave_type_id: data["leave-types"].find((item) => item.status === "active")?.leave_type_id || "",
+      annual_allotment: 20,
+      carry_over_limit: 5,
+      reset_frequency: "annually",
+      allow_negative: false,
+      allow_partial_day: true,
+      effective_from: new Date().toISOString().slice(0, 10),
+    });
+    setModal("mapping");
+  };
+  const openEditMapping = (policy) => {
+    setEditingPolicy(policy);
+    setMapping({
+      job_id: policy.job_id,
+      leave_type_id: policy.leave_type_id,
+      annual_allotment: policy.annual_allotment,
+      carry_over_limit: policy.carry_over_limit,
+      reset_frequency: policy.accrual_rule?.reset_frequency || "annually",
+      allow_negative: policy.allow_negative,
+      allow_partial_day: policy.allow_partial_day,
+      effective_from: policy.effective_from,
+    });
+    setModal("mapping");
+  };
+  const closeMapping = () => {
+    setModal(null);
+    setEditingPolicy(null);
+  };
+  const saveMapping = async (e) => {
     e.preventDefault();
     try {
-      await api.create("job-leave-policies", {
+      const values = {
         ...mapping,
         annual_allotment: Number(mapping.annual_allotment),
         carry_over_limit: Number(mapping.carry_over_limit),
-        accrual_rule: { type: "monthly" },
-        counting_rule: { weekends: false, holidays: false },
-        request_window: { min_days: 1, max_days: 365 },
-        documentation_rule: { required_after_days: 5 },
-        effective_to: null,
-        status: "active",
-      });
-      notify("Policy mapping created.");
-      setModal(null);
+      };
+      delete values.reset_frequency;
+      const accrualRule = {
+        ...(editingPolicy?.accrual_rule || { type: "monthly" }),
+        reset_frequency: mapping.reset_frequency,
+      };
+      if (editingPolicy) {
+        await api.update("job-leave-policies", editingPolicy.policy_id, {
+          ...editingPolicy,
+          ...values,
+          accrual_rule: accrualRule,
+        });
+        notify("Policy mapping updated.");
+      } else {
+        await api.create("job-leave-policies", {
+          ...values,
+          accrual_rule: accrualRule,
+          counting_rule: { weekends: false, holidays: false },
+          request_window: { min_days: 1, max_days: 365 },
+          documentation_rule: { required_after_days: 5 },
+          effective_to: null,
+          status: "active",
+        });
+        notify("Policy mapping created.");
+      }
+      closeMapping();
       await refresh();
     } catch (error) {
       notify(error.message, "error");
@@ -3672,7 +3726,7 @@ function Policies({ data, refresh, notify }) {
             <Button variant="outline" onClick={() => setModal("type")}>
               New leave type
             </Button>
-            <Button onClick={() => setModal("mapping")}>New mapping</Button>
+            <Button onClick={openCreateMapping}>New mapping</Button>
           </div>
         }
       />
@@ -3686,8 +3740,10 @@ function Policies({ data, refresh, notify }) {
                 <CardDescription>Job: {job(item.job_id)}</CardDescription>
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-3 text-sm">
-                <Row label="Annual allowance" value={item.annual_allotment} />
-                <Row label="Carry-over limit" value={item.carry_over_limit} />
+                <Row label="Annual allowance" value={formatLeaveAmount(item.annual_allotment)} />
+                <Row label="Carry-over limit" value={formatLeaveAmount(item.carry_over_limit)} />
+                <Row label="Accrual" value={human(item.accrual_rule?.type || "monthly")} />
+                <Row label="Balance resets" value={human(item.accrual_rule?.reset_frequency || "annually")} />
                 <Row
                   label="Negative balance"
                   value={item.allow_negative ? "Allowed" : "Not allowed"}
@@ -3696,6 +3752,11 @@ function Policies({ data, refresh, notify }) {
                   label="Partial day"
                   value={item.allow_partial_day ? "Allowed" : "Not allowed"}
                 />
+                <div className="col-span-2">
+                  <Button variant="outline" size="sm" onClick={() => openEditMapping(item)}>
+                    Edit policy
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -3761,13 +3822,14 @@ function Policies({ data, refresh, notify }) {
         </Modal>
       )}
       {modal === "mapping" && (
-        <Modal title="Create policy mapping" close={() => setModal(null)}>
-          <form className="space-y-4" onSubmit={createMapping}>
+        <Modal title={editingPolicy ? "Edit policy mapping" : "Create policy mapping"} close={closeMapping}>
+          <form className="space-y-4" onSubmit={saveMapping}>
             <label className="block text-sm font-semibold">
               Job
               <select
                 aria-label="Policy job"
                 value={mapping.job_id}
+                disabled={Boolean(editingPolicy)}
                 onChange={(e) =>
                   setMapping({ ...mapping, job_id: e.target.value })
                 }
@@ -3787,6 +3849,7 @@ function Policies({ data, refresh, notify }) {
               <select
                 aria-label="Policy leave type"
                 value={mapping.leave_type_id}
+                disabled={Boolean(editingPolicy)}
                 onChange={(e) =>
                   setMapping({ ...mapping, leave_type_id: e.target.value })
                 }
@@ -3806,6 +3869,7 @@ function Policies({ data, refresh, notify }) {
                 label="Annual allowance"
                 type="number"
                 min="0"
+                step="0.01"
                 value={mapping.annual_allotment}
                 onChange={(v) =>
                   setMapping({ ...mapping, annual_allotment: v })
@@ -3815,11 +3879,43 @@ function Policies({ data, refresh, notify }) {
                 label="Carry-over limit"
                 type="number"
                 min="0"
+                step="0.01"
                 value={mapping.carry_over_limit}
+                disabled={mapping.reset_frequency === "monthly"}
+                helperText={mapping.reset_frequency === "monthly" ? "Not used because this balance resets every month." : "Maximum unused leave that may move into the next policy year."}
                 onChange={(v) =>
                   setMapping({ ...mapping, carry_over_limit: v })
                 }
               />
+            </div>
+            <label className="block text-sm font-semibold">
+              Balance resets
+              <select
+                aria-label="Balance reset frequency"
+                value={mapping.reset_frequency}
+                onChange={(e) =>
+                  setMapping({ ...mapping, reset_frequency: e.target.value })
+                }
+                className="mt-2 h-11 w-full rounded-lg border bg-white px-3"
+              >
+                <option value="annually">Annually</option>
+                <option
+                  value="monthly"
+                  disabled={Boolean(editingPolicy && editingPolicy.accrual_rule?.type !== "monthly")}
+                >
+                  Monthly
+                </option>
+              </select>
+              <p className="mt-1 text-xs font-normal text-muted-foreground">
+                Monthly expires unused leave before the next credit. Annually carries up to the configured limit.
+              </p>
+            </label>
+            <div className="rounded-lg bg-muted p-3 text-sm">
+              {(editingPolicy?.accrual_rule?.type || "monthly") === "monthly" ? (
+                <>Monthly credit: <b>{formatLeaveAmount(Number(mapping.annual_allotment) / 12)}</b></>
+              ) : (
+                <>Accrual schedule: <b>Annual</b></>
+              )}
             </div>
             <label className="flex gap-2 text-sm font-semibold">
               <input
@@ -3851,7 +3947,7 @@ function Policies({ data, refresh, notify }) {
               required
               onChange={(v) => setMapping({ ...mapping, effective_from: v })}
             />
-            <Button className="w-full">Create mapping</Button>
+            <Button className="w-full">{editingPolicy ? "Save policy" : "Create mapping"}</Button>
           </form>
         </Modal>
       )}
