@@ -21,8 +21,9 @@ import {
   X,
 } from "lucide-react";
 import { api } from "./lib/api";
-import { weeklyCompletedSeconds } from "./lib/attendance";
-import { formatLeaveAmount } from "./lib/leave";
+import { employeePresence, weeklyCompletedSeconds } from "./lib/attendance";
+import { auditDisplayRows } from "./lib/audit";
+import { formatLeaveAmount, partialLeaveCharge } from "./lib/leave";
 import { Button } from "./components/ui/button";
 import {
   addLocalDays,
@@ -720,7 +721,6 @@ function WeeklyRecordedHours({ data, employee, tenant }) {
     dates,
     summaries,
     employeeId,
-    isOvertimeEligible: Boolean(jobProfile?.is_ot_eligible),
     maxDailyMins: jobProfile?.max_daily_mins,
   });
   const dayLabel = (localDate) =>
@@ -862,13 +862,15 @@ function Dashboard({
           .replaceAll("/", "-") === today,
     )
     .reduce((sum, item) => sum + sessionSeconds(item), 0);
-  const todaySeconds =
-    Math.max(todayMinutes * 60, todayClosedSessionSeconds) + elapsedSeconds;
   const jobProfile = data["job-profile"];
-  const dailyLimitMins =
-    jobProfile && !jobProfile.is_ot_eligible && jobProfile.max_daily_mins !== null
-      ? Number(jobProfile.max_daily_mins)
-      : null;
+  const dailyLimitMins = jobProfile?.max_daily_mins === null || jobProfile?.max_daily_mins === undefined
+    ? null
+    : Number(jobProfile.max_daily_mins);
+  const uncappedTodaySeconds =
+    Math.max(todayMinutes * 60, todayClosedSessionSeconds) + elapsedSeconds;
+  const todaySeconds = dailyLimitMins === null
+    ? uncappedTodaySeconds
+    : Math.min(uncappedTodaySeconds, Math.max(0, dailyLimitMins) * 60);
   return (
     <div className="space-y-6">
       <div className="rounded-2xl bg-gradient-to-br from-[#3b160d] to-[#8c2414] p-6 text-white shadow-xl sm:p-8">
@@ -1356,15 +1358,12 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
     reason: "",
   });
   const selectedType = types.find((type) => type.leave_type_id === form.leave_type_id);
-  const selectedJob = data["job-profile"];
   const customMinutes = timeIntervalMinutes(form.partial_start_time, form.partial_end_time);
   const projectedDays = Math.max(
     0,
     form.partial_day === "custom_hours"
       ? form.start_date === form.end_date && customMinutes > 0
-        ? selectedType?.unit === "hours"
-          ? customMinutes / 60
-          : customMinutes / Number(selectedJob?.standard_daily_mins || 480)
+        ? partialLeaveCharge(customMinutes, selectedType?.unit)
         : 0
       : chargeableDays(form.start_date, form.end_date, data.holidays) -
         (form.partial_day === "none" ? 0 : 0.5),
@@ -2198,24 +2197,14 @@ function Pagination({ page, pageCount, pageSize, onPage, onPageSize, total }) {
   );
 }
 
-function WhosIn({ data, user }) {
+function WhosIn({ data, user, tenant }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateForTimeZone(tenant?.timezone || "UTC");
   const openByEmployee = new Map(
     data["attendance-sessions"]
       .filter((item) => item.status === "open")
       .map((item) => [item.employee_id, item]),
-  );
-  const approvedLeave = new Set(
-    data["leave-requests"]
-      .filter(
-        (item) =>
-          item.status === "approved" &&
-          item.start_date <= today &&
-          item.end_date >= today,
-      )
-      .map((item) => item.employee_id),
   );
   const rows = data.employees
     .filter(
@@ -2224,11 +2213,12 @@ function WhosIn({ data, user }) {
     )
     .map((item) => ({
       ...item,
-      presence: approvedLeave.has(item.employee_id)
-        ? "on_leave"
-        : openByEmployee.has(item.employee_id)
-          ? "clocked_in"
-          : "clocked_out",
+      presence: employeePresence({
+        employeeId: item.employee_id,
+        sessions: data["attendance-sessions"],
+        leaveRequests: data["leave-requests"],
+        localDate: today,
+      }),
       session: openByEmployee.get(item.employee_id),
     }))
     .filter(
@@ -3192,9 +3182,10 @@ function Jobs({ data, refresh, notify }) {
   );
 }
 
-function Overrides({ data, refresh, notify, user }) {
+function Overrides({ data, refresh, notify, user, tenant }) {
   const employees = data.employees.filter((item) => item.status === "active");
   const types = data["leave-types"].filter((item) => item.status === "active");
+  const today = localDateForTimeZone(tenant?.timezone || "UTC");
   const [form, setForm] = useState({
     employee_id: "",
     leave_type_id: "",
@@ -3209,8 +3200,23 @@ function Overrides({ data, refresh, notify, user }) {
     clock_out_time: "",
     reason: "",
   });
+  const [leaveForm, setLeaveForm] = useState({
+    employee_id: "",
+    leave_type_id: "",
+    start_date: today,
+    end_date: today,
+    duration: "full_day",
+    start_time: "09:00",
+    end_time: "10:00",
+    reason: "",
+  });
   useEffect(() => {
     setForm((value) => ({
+      ...value,
+      employee_id: value.employee_id || employees[0]?.employee_id || "",
+      leave_type_id: value.leave_type_id || types[0]?.leave_type_id || "",
+    }));
+    setLeaveForm((value) => ({
       ...value,
       employee_id: value.employee_id || employees[0]?.employee_id || "",
       leave_type_id: value.leave_type_id || types[0]?.leave_type_id || "",
@@ -3223,6 +3229,19 @@ function Overrides({ data, refresh, notify, user }) {
   );
   const after = balance
     ? Number(balance.remaining) + Number(form.amount || 0)
+    : null;
+  const leaveType = types.find((item) => item.leave_type_id === leaveForm.leave_type_id);
+  const leaveBalance = data["leave-balances"].find(
+    (item) =>
+      item.employee_id === leaveForm.employee_id &&
+      item.leave_type_id === leaveForm.leave_type_id,
+  );
+  const leaveMinutes = timeIntervalMinutes(leaveForm.start_time, leaveForm.end_time);
+  const leaveCharge = leaveForm.duration === "custom_hours"
+    ? partialLeaveCharge(leaveMinutes, leaveType?.unit)
+    : chargeableDays(leaveForm.start_date, leaveForm.end_date, data.holidays);
+  const leaveAfter = leaveBalance
+    ? Number(leaveBalance.remaining) - leaveCharge
     : null;
   const submit = async (e) => {
     e.preventDefault();
@@ -3269,6 +3288,24 @@ function Overrides({ data, refresh, notify, user }) {
       notify(error.message, "error");
     }
   };
+  const submitLeaveOverride = async (event) => {
+    event.preventDefault();
+    const employeeName = employees.find((item) => item.employee_id === leaveForm.employee_id)?.name || "this employee";
+    if (!window.confirm(`Record ${formatLeaveAmount(leaveCharge)} leave credits for ${employeeName}? This immediately approves the leave and deducts the balance.`)) return;
+    try {
+      await api.createLeaveOverride({
+        ...leaveForm,
+        end_date: leaveForm.duration === "custom_hours" ? leaveForm.start_date : leaveForm.end_date,
+        start_time: leaveForm.duration === "custom_hours" ? leaveForm.start_time : null,
+        end_time: leaveForm.duration === "custom_hours" ? leaveForm.end_time : null,
+      });
+      notify("Leave recorded and balance deducted.");
+      setLeaveForm((value) => ({ ...value, reason: "" }));
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
   return (
     <div className="space-y-5">
       <Header
@@ -3276,6 +3313,10 @@ function Overrides({ data, refresh, notify, user }) {
         detail="Append-only leave adjustments with a required reason and balance preview."
       />
       <Card>
+        <CardHeader>
+          <CardTitle>Adjust leave balance</CardTitle>
+          <CardDescription>Add or remove balance credits without creating a dated leave record.</CardDescription>
+        </CardHeader>
         <CardContent className="pt-6">
           <form onSubmit={submit} className="grid gap-4 lg:grid-cols-2">
             <label className="text-sm font-semibold">
@@ -3346,6 +3387,28 @@ function Overrides({ data, refresh, notify, user }) {
             <Button disabled={!balance || !Number(form.amount)}>
               Confirm adjustment
             </Button>
+          </form>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Record missed leave</CardTitle>
+          <CardDescription>Immediately create approved leave for an employee who forgot to submit a request, deduct the balance, and add it to leave calendars.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <form onSubmit={submitLeaveOverride} className="grid gap-4 lg:grid-cols-2">
+            <label className="text-sm font-semibold">Employee<select aria-label="Leave deduction employee" required value={leaveForm.employee_id} onChange={(event) => setLeaveForm({ ...leaveForm, employee_id: event.target.value })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3">{employees.map((item) => <option key={item.employee_id} value={item.employee_id}>{item.name}</option>)}</select></label>
+            <label className="text-sm font-semibold">Leave type<select aria-label="Leave deduction type" required value={leaveForm.leave_type_id} onChange={(event) => setLeaveForm({ ...leaveForm, leave_type_id: event.target.value })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3">{types.map((item) => <option key={item.leave_type_id} value={item.leave_type_id}>{item.name}</option>)}</select></label>
+            {leaveForm.duration === "full_day" ? <><Field label="From date" type="date" required value={leaveForm.start_date} onChange={(value) => setLeaveForm({ ...leaveForm, start_date: value })} /><Field label="To date" type="date" required min={leaveForm.start_date} value={leaveForm.end_date} onChange={(value) => setLeaveForm({ ...leaveForm, end_date: value })} /></> : <Field label="Date" type="date" required value={leaveForm.start_date} onChange={(value) => setLeaveForm({ ...leaveForm, start_date: value, end_date: value })} />}
+            <label className="text-sm font-semibold">Duration<select aria-label="Leave deduction duration" value={leaveForm.duration} onChange={(event) => setLeaveForm({ ...leaveForm, duration: event.target.value, ...(event.target.value === "custom_hours" ? { end_date: leaveForm.start_date } : {}) })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3"><option value="full_day">Full working day(s)</option><option value="custom_hours">Specific hours</option></select></label>
+            {leaveForm.duration === "custom_hours" ? <div className="grid grid-cols-2 gap-3"><Field label="Start time" type="time" required value={leaveForm.start_time} onChange={(value) => setLeaveForm({ ...leaveForm, start_time: value })} /><Field label="End time" type="time" required value={leaveForm.end_time} onChange={(value) => setLeaveForm({ ...leaveForm, end_time: value })} /></div> : <div />}
+            <div className="lg:col-span-2"><Field label="Required reason" required value={leaveForm.reason} onChange={(value) => setLeaveForm({ ...leaveForm, reason: value })} /></div>
+            <div className="rounded-lg bg-muted p-4 text-sm">
+              <b>Deduction preview</b>
+              <p className="mt-1">{leaveBalance ? `${formatLeaveAmount(leaveBalance.remaining)} → ${formatLeaveAmount(leaveAfter)} ${leaveBalance.unit}` : "No matching balance exists"}</p>
+              {leaveForm.duration === "custom_hours" && leaveType?.unit !== "hours" ? <p className="mt-1 text-muted-foreground">Hourly rate: 0.11 credits per hour</p> : null}
+            </div>
+            <Button disabled={!leaveBalance || leaveCharge <= 0 || !leaveForm.reason.trim()}>Record and deduct leave</Button>
           </form>
         </CardContent>
       </Card>
@@ -4009,16 +4072,17 @@ function Audit({ data, notify }) {
   const { query, action, target, actor, from, to, sort } = view;
   const page = Number(view.page) || 1;
   const pageSize = Number(view.pageSize) || 25;
-  const actions = [...new Set(data["audit-events"].map((item) => item.action))].sort();
-  const targets = [...new Set(data["audit-events"].map((item) => item.target_type))].sort();
-  const actors = [...new Map(data["audit-events"].filter((item) => item.actor_user_id).map((item) => [item.actor_user_id, item.actor || item.actor_user_id])).entries()];
-  const rows = data["audit-events"].filter((item) => {
+  const auditEvents = auditDisplayRows(data["audit-events"], data);
+  const actions = [...new Set(auditEvents.map((item) => item.action))].sort();
+  const targets = [...new Set(auditEvents.map((item) => item.target_type))].sort();
+  const actors = [...new Map(auditEvents.filter((item) => item.actor_user_id).map((item) => [item.actor_user_id, item.actor])).entries()];
+  const rows = auditEvents.filter((item) => {
     const occurred = String(item.occurred_at || "").slice(0, 10);
     return (action === "all" || item.action === action) &&
       (target === "all" || item.target_type === target) &&
       (actor === "all" || item.actor_user_id === actor) &&
       (!from || occurred >= from) && (!to || occurred <= to) &&
-      `${item.actor || ""} ${item.action} ${item.target_type} ${item.target_id} ${item.reason || ""}`.toLowerCase().includes(query.toLowerCase());
+      `${item.actor || ""} ${item.action} ${item.target_type} ${item.target_name} ${item.reason || ""}`.toLowerCase().includes(query.toLowerCase());
   }).sort((a, b) => sort === "oldest" ? String(a.occurred_at).localeCompare(String(b.occurred_at)) : String(b.occurred_at).localeCompare(String(a.occurred_at)));
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const visible = rows.slice((page - 1) * pageSize, page * pageSize);
@@ -4057,7 +4121,7 @@ function Audit({ data, notify }) {
         <label className="text-sm font-semibold">From<input aria-label="Audit from" type="date" value={from} onChange={(event) => setFilter("from", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label>
         <label className="text-sm font-semibold">To<input aria-label="Audit to" type="date" value={to} onChange={(event) => setFilter("to", event.target.value)} className="mt-2 block h-11 rounded-lg border bg-white px-3" /></label>
       </FilterToolbar>
-      {visible.length ? <Card><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b">{["Time", "Actor", "Action", "Target", "Reason"].map((label) => <th className="p-4" key={label}>{label}</th>)}</tr></thead><tbody>{visible.map((item) => <tr className="border-b last:border-0" key={item.event_id}><td className="p-4">{dateTime(item.occurred_at)}</td><td className="p-4">{item.actor || item.actor_user_id || "System"}</td><td className="p-4 font-semibold">{human(item.action)}</td><td className="p-4">{item.target_type} · {item.target_id}</td><td className="p-4">{item.reason || "—"}</td></tr>)}</tbody></table><Pagination page={page} pageCount={pageCount} pageSize={pageSize} total={rows.length} onPage={(value) => setView({ page: String(value) })} onPageSize={(value) => setView({ pageSize: String(value), page: "1" })} /></CardContent></Card> : <Empty title="No audit activity matches" detail="Clear a filter or broaden the date range." />}
+      {visible.length ? <Card><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b">{["Time", "Actor", "Action", "Target", "Reason"].map((label) => <th className="p-4" key={label}>{label}</th>)}</tr></thead><tbody>{visible.map((item) => <tr className="border-b last:border-0" key={item.event_id}><td className="p-4">{dateTime(item.occurred_at)}</td><td className="p-4">{item.actor}</td><td className="p-4 font-semibold">{human(item.action)}</td><td className="p-4">{item.target_type} · {item.target_name}</td><td className="p-4">{item.reason || "—"}</td></tr>)}</tbody></table><Pagination page={page} pageCount={pageCount} pageSize={pageSize} total={rows.length} onPage={(value) => setView({ page: String(value) })} onPageSize={(value) => setView({ pageSize: String(value), page: "1" })} /></CardContent></Card> : <Empty title="No audit activity matches" detail="Clear a filter or broaden the date range." />}
     </div>
   );
 }
@@ -4603,7 +4667,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
     content = <Approvals data={data} refresh={refresh} notify={notify} />;
   else if (page === "team-dashboard")
     content = <TeamDashboard data={data} user={user} onNavigate={choose} />;
-  else if (page === "whos-in") content = <WhosIn data={data} user={user} />;
+  else if (page === "whos-in") content = <WhosIn data={data} user={user} tenant={tenant} />;
   else if (page === "team-calendar")
     content = <TeamCalendar data={data} user={user} />;
   else if (page === "alerts") content = <TeamReports data={data} user={user} tenant={tenant} />;
@@ -4615,7 +4679,7 @@ function Shell({ user, data, loading, error, refresh, logout, onContextChange })
     content = <Policies data={data} refresh={refresh} notify={notify} />;
   else if (page === "overrides")
     content = (
-      <Overrides data={data} refresh={refresh} notify={notify} user={user} />
+      <Overrides data={data} refresh={refresh} notify={notify} user={user} tenant={tenant} />
     );
   else if (page === "reports")
     content = <OrganizationReports data={data} tenant={{ ...tenant, departments: data.departments }} />;

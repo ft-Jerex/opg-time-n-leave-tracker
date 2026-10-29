@@ -10,6 +10,7 @@ export const hrRoutes = (app, requireCapability) => {
   router.post("/directory/:employee_id/invitation/link", requireCapability("users:write"), send(service.generateDirectoryInvitationLink));
   router.get("/my-job-profile", send(service.getOwnJobProfile));
   router.get("/my-leave-options", send(service.getOwnLeaveOptions));
+  router.post("/leave-overrides", requireCapability("leave:override"), send(service.createLeaveOverride, 201));
   router.post("/attendance-overrides", requireCapability("attendance:override"), send(service.createAttendanceOverride, 201));
   app.use("/api/v1/hr", router);
 };

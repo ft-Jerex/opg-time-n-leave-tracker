@@ -7,6 +7,7 @@ import {
   validateOutput,
 } from "../validation/schema-validator.js";
 import * as repository from "../models/resource-model.js";
+import { partialLeaveCharge } from "../../shared/leave.js";
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -533,9 +534,7 @@ export const transition = async (
       let amount = Number(charge.rows[0].days);
       if (current.partial_day === "custom_hours") {
         const partialMinutes = Number(current.partial_minutes || 0);
-        amount = policy.rows[0].leave_unit === "hours"
-          ? partialMinutes / 60
-          : partialMinutes / Number(policy.rows[0].standard_daily_mins || 480);
+        amount = partialLeaveCharge(partialMinutes, policy.rows[0].leave_unit);
       } else if (["start_half", "end_half"].includes(current.partial_day)) {
         amount -= 0.5;
       }
@@ -865,7 +864,7 @@ const reconcileDailySummary = async (client, req, session, clockedOutAt) => {
        JOIN job_profiles j ON j.tenant_id = e.tenant_id AND j.job_id = e.job_id
        JOIN tenants t ON t.tenant_id = e.tenant_id
       WHERE e.tenant_id = $1 AND e.employee_id = $2`,
-    [req.tenantId, req.actor.employee_id, clockedOutAt],
+    [req.tenantId, req.actor.employee_id, session.clock_in_at],
   );
   if (!context.rowCount) return;
 

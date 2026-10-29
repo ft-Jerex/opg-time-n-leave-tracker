@@ -48,12 +48,30 @@ const quote = (identifier) => `"${identifier.replaceAll('"', '""')}"`;
 const sortable = new Set([
   "created_at",
   "occurred_at",
+  "clock_in_at",
   "local_date",
   "start_date",
   "end_date",
   "name",
   "status",
 ]);
+const defaultSortByTable = {
+  attendance_sessions: "clock_in_at",
+  attendance_summaries: "local_date",
+  leave_requests: "start_date",
+};
+
+const listOrder = async (client, table, idColumn, query) => {
+  const requested = sortable.has(query.sort) ? query.sort : null;
+  const preferred = requested || defaultSortByTable[table];
+  const column = preferred && await hasColumn(client, table, preferred)
+    ? preferred
+    : idColumn;
+  return {
+    order: quote(column),
+    direction: String(query.direction).toLowerCase() === "asc" ? "ASC" : "DESC",
+  };
+};
 
 export const list = async (client, resource, tenantId, query = {}) => {
   const [, table] = resources[resource] || [];
@@ -62,12 +80,12 @@ export const list = async (client, resource, tenantId, query = {}) => {
   const offset = query.page
     ? Math.max((Number(query.page) - 1) * limit, 0)
     : Math.max(Number(query.offset || 0), 0);
-  const sort = sortable.has(query.sort) ? query.sort : "created_at";
-  const direction =
-    String(query.direction).toLowerCase() === "asc" ? "ASC" : "DESC";
-  const order = (await hasColumn(client, table, sort))
-    ? quote(sort)
-    : quote(resources[resource][2]);
+  const { order, direction } = await listOrder(
+    client,
+    table,
+    resources[resource][2],
+    query,
+  );
   const { where, values } = await listFilters(client, resource, table, query, [tenantId]);
   const result = await client.query(
     `SELECT *, count(*) OVER() AS __total_count FROM ${quote(table)} WHERE ${where.join(" AND ")} ORDER BY ${order} ${direction}, ${quote(resources[resource][2])} ASC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
@@ -103,8 +121,9 @@ export const listForEmployees = async (
     [tenantId, employeeIds],
     { employeeScope: true },
   );
+  const { order, direction } = await listOrder(client, table, idColumn, query);
   const result = await client.query(
-    `SELECT *, count(*) OVER() AS __total_count FROM ${quote(table)} WHERE ${where.join(" AND ")} ORDER BY ${quote(idColumn)} ASC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    `SELECT *, count(*) OVER() AS __total_count FROM ${quote(table)} WHERE ${where.join(" AND ")} ORDER BY ${order} ${direction}, ${quote(idColumn)} ASC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
     [...values, limit, offset],
   );
   const total = Number(result.rows[0]?.__total_count || 0);

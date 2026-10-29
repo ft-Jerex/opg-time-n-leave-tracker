@@ -3,6 +3,7 @@ import { withTransaction } from "../config/database.js";
 import { hashPassword } from "./auth-service.js";
 import { HttpError } from "../views/problem-view.js";
 import { roleCapabilities } from "../domain/role-capabilities.js";
+import { partialLeaveCharge } from "../../shared/leave.js";
 
 export { roleCapabilities } from "../domain/role-capabilities.js";
 
@@ -502,4 +503,165 @@ export const createAttendanceOverride = async (req) => withTransaction(async (cl
     { employee_id: employeeId, local_date: localDate, replaced_sessions: replacedSessions, replaced_session_ids: replacedSessionIds, new_values: { clock_in_time: clockInTime, clock_out_time: clockOutTime, source: "hr_bulk_override", status }, timezone: employee.timezone },
   );
   return { session: sessionResult.rows[0], summary, replaced_session_ids: replacedSessionIds };
+});
+
+export const createLeaveOverride = async (req) => withTransaction(async (client) => {
+  const body = req.body || {};
+  const employeeId = String(body.employee_id || "").trim();
+  const leaveTypeId = String(body.leave_type_id || "").trim();
+  const startDate = String(body.start_date || "").trim();
+  const endDate = String(body.end_date || "").trim();
+  const duration = String(body.duration || "full_day");
+  const startTime = body.start_time ? String(body.start_time).trim() : null;
+  const endTime = body.end_time ? String(body.end_time).trim() : null;
+  const reason = String(body.reason || "").trim();
+  const validDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!employeeId || !leaveTypeId || !validDate.test(startDate) || !validDate.test(endDate) || !reason)
+    throw new HttpError(422, "Invalid Request", "employee_id, leave_type_id, dates, and reason are required.");
+  if (endDate < startDate)
+    throw new HttpError(422, "Invalid Request", "end_date must be on or after start_date.");
+  if (!new Set(["full_day", "custom_hours"]).has(duration))
+    throw new HttpError(422, "Invalid Request", "duration must be full_day or custom_hours.");
+
+  let partialMinutes = null;
+  if (duration === "custom_hours") {
+    if (startDate !== endDate)
+      throw new HttpError(422, "Invalid Request", "Hourly leave must use one date.");
+    const startMinutes = localTimeMinutes(startTime, "start_time");
+    const endMinutes = localTimeMinutes(endTime, "end_time");
+    if (endMinutes <= startMinutes)
+      throw new HttpError(422, "Invalid Request", "end_time must be after start_time.");
+    partialMinutes = endMinutes - startMinutes;
+  }
+
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    `leave:${req.tenantId}:${employeeId}`,
+  ]);
+  const policyResult = await client.query(
+    `SELECT e.employee_id, e.name, p.allow_negative, p.allow_partial_day,
+            lt.unit AS leave_unit
+       FROM employees e
+       JOIN job_leave_policies p
+         ON p.tenant_id=e.tenant_id AND p.job_id=e.job_id
+       JOIN leave_types lt
+         ON lt.tenant_id=p.tenant_id AND lt.leave_type_id=p.leave_type_id
+      WHERE e.tenant_id=$1 AND e.employee_id=$2 AND e.status='active'
+        AND p.leave_type_id=$3 AND p.status='active' AND lt.status='active'
+        AND p.effective_from <= $4::date
+        AND (p.effective_to IS NULL OR p.effective_to >= $5::date)
+      ORDER BY p.effective_from DESC
+      LIMIT 1`,
+    [req.tenantId, employeeId, leaveTypeId, startDate, endDate],
+  );
+  if (!policyResult.rowCount)
+    throw new HttpError(422, "Ineligible Leave", "No active leave policy covers this employee and period.");
+  const policy = policyResult.rows[0];
+  if (duration === "custom_hours" && !policy.allow_partial_day)
+    throw new HttpError(422, "Ineligible Leave", "This leave policy does not allow hourly leave.");
+
+  let amount;
+  if (duration === "custom_hours") {
+    amount = partialLeaveCharge(partialMinutes, policy.leave_unit);
+  } else {
+    const charge = await client.query(
+      `SELECT count(*)::numeric AS days
+         FROM generate_series($1::date,$2::date,'1 day') day
+        WHERE extract(isodow FROM day) BETWEEN 1 AND 5
+          AND NOT EXISTS (
+            SELECT 1
+              FROM holidays h
+              JOIN employees e
+                ON e.tenant_id=h.tenant_id
+               AND e.holiday_calendar_id=h.holiday_calendar_id
+             WHERE e.tenant_id=$3 AND e.employee_id=$4
+               AND h.status='active' AND h.local_date=day::date
+          )`,
+      [startDate, endDate, req.tenantId, employeeId],
+    );
+    amount = Number(charge.rows[0].days);
+  }
+  if (amount <= 0)
+    throw new HttpError(422, "Invalid Leave Period", "The selected period has no chargeable working time.");
+
+  const overlap = await client.query(
+    `SELECT 1 FROM leave_requests
+      WHERE tenant_id=$1 AND employee_id=$2 AND status IN ('pending','approved')
+        AND start_date <= $4::date AND end_date >= $3::date
+      LIMIT 1`,
+    [req.tenantId, employeeId, startDate, endDate],
+  );
+  if (overlap.rowCount)
+    throw new HttpError(409, "Overlapping Leave", "The period overlaps pending or approved leave.");
+
+  const balanceResult = await client.query(
+    `SELECT * FROM leave_balances
+      WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3
+      ORDER BY as_of DESC, balance_id DESC
+      LIMIT 1 FOR UPDATE`,
+    [req.tenantId, employeeId, leaveTypeId],
+  );
+  if (!balanceResult.rowCount)
+    throw new HttpError(422, "Missing Balance", "No leave balance exists for this employee and leave type.");
+  const balance = balanceResult.rows[0];
+  const available = Number(balance.remaining) - Number(balance.pending);
+  if (!policy.allow_negative && available < amount)
+    throw new HttpError(422, "Insufficient Leave Balance", "The override exceeds the balance available after pending requests.");
+
+  const requestId = id("leave");
+  const occurredAt = now();
+  const requestResult = await client.query(
+    `INSERT INTO leave_requests
+      (request_id,tenant_id,employee_id,leave_type_id,start_date,end_date,
+       partial_day,partial_start_time,partial_end_time,partial_minutes,
+       chargeable_amount,reason,attachment_ids,status,approver_id,submitted_at,
+       decided_at,decision_note,version)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,ARRAY[]::text[],
+             'approved',$13,$14,$14,'HR leave override',1)
+     RETURNING *`,
+    [
+      requestId,
+      req.tenantId,
+      employeeId,
+      leaveTypeId,
+      startDate,
+      endDate,
+      duration === "custom_hours" ? "custom_hours" : "none",
+      duration === "custom_hours" ? startTime : null,
+      duration === "custom_hours" ? endTime : null,
+      partialMinutes,
+      amount,
+      reason,
+      req.actor.employee_id,
+      occurredAt,
+    ],
+  );
+  const ledgerResult = await client.query(
+    `INSERT INTO leave_ledger_entries
+      (entry_id,tenant_id,employee_id,leave_type_id,effective_date,amount,
+       entry_type,source_id,reason,created_by,created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'usage',$7,$8,$9,$10)
+     RETURNING *`,
+    [id("ledger"), req.tenantId, employeeId, leaveTypeId, startDate, -amount, requestId, reason, req.actor.user_id, occurredAt],
+  );
+  const updatedBalance = await client.query(
+    `UPDATE leave_balances
+        SET used=used+$1, remaining=remaining-$1, as_of=$2
+      WHERE tenant_id=$3 AND balance_id=$4
+      RETURNING *`,
+    [amount, startDate, req.tenantId, balance.balance_id],
+  );
+  await audit(
+    client,
+    req,
+    "leave_manual_override",
+    "LeaveRequest",
+    requestId,
+    reason,
+    { employee_id: employeeId, employee_name: policy.name, leave_type_id: leaveTypeId, chargeable_amount: amount, duration },
+  );
+  return {
+    request: requestResult.rows[0],
+    ledger_entry: ledgerResult.rows[0],
+    balance: updatedBalance.rows[0],
+  };
 });

@@ -156,6 +156,8 @@ export const api = {
     request<Record<string, unknown>>(`/hr/directory/${employee_id}/invitation/link`, { method: "POST", body: {} }),
   createAttendanceOverride: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>("/hr/attendance-overrides", { method: "POST", body }),
+  createLeaveOverride: (body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("/hr/leave-overrides", { method: "POST", body }),
   myJobProfile: () => request<Record<string, unknown>>("/hr/my-job-profile"),
   myLeaveOptions: () => request<LeaveOption[]>("/hr/my-leave-options"),
   report: (preset: string, query: Record<string, string | number> = {}) =>

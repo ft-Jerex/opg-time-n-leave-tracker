@@ -42,6 +42,47 @@ test(
       (await user.get("/api/v1/employees").set("x-tenant-id", "harbor")).status,
       403,
     );
+    const crossMidnightSessionId = `session-cross-midnight-${Date.now()}`;
+    const crossMidnightDates = await pool.query(
+      `SELECT (CURRENT_TIMESTAMP AT TIME ZONE timezone)::date AS clock_out_date,
+              ((CURRENT_TIMESTAMP AT TIME ZONE timezone)::date - 1) AS clock_in_date,
+              ((((CURRENT_TIMESTAMP AT TIME ZONE timezone)::date - 1) + time '23:59') AT TIME ZONE timezone) AS clock_in_at
+         FROM tenants WHERE tenant_id=$1`,
+      ["northstar"],
+    );
+    await pool.query(
+      `INSERT INTO attendance_sessions
+        (session_id,tenant_id,employee_id,clock_in_at,clock_out_at,source,status,version)
+       VALUES ($1,$2,$3,$4,NULL,'responsive_web','open',0)`,
+      [crossMidnightSessionId, "northstar", "ns-morgan", crossMidnightDates.rows[0].clock_in_at],
+    );
+    const crossMidnightClockOut = await user
+      .post("/api/v1/attendance-sessions/clock-out")
+      .set("x-csrf-token", userCsrf)
+      .send({});
+    assert.equal(crossMidnightClockOut.status, 200);
+    const crossMidnightSummary = await pool.query(
+      "SELECT local_date FROM attendance_summaries WHERE tenant_id=$1 AND employee_id=$2 AND local_date IN ($3,$4) ORDER BY local_date",
+      [
+        "northstar",
+        "ns-morgan",
+        crossMidnightDates.rows[0].clock_in_date,
+        crossMidnightDates.rows[0].clock_out_date,
+      ],
+    );
+    assert.ok(
+      crossMidnightSummary.rows.some(
+        (row) => row.local_date === crossMidnightDates.rows[0].clock_in_date,
+      ),
+      "cross-midnight attendance must be summarized on the clock-in date",
+    );
+    assert.equal(
+      crossMidnightSummary.rows.some(
+        (row) => row.local_date === crossMidnightDates.rows[0].clock_out_date,
+      ),
+      false,
+      "cross-midnight attendance must not create a clock-out-date summary",
+    );
     const leaveOptions = await user.get("/api/v1/hr/my-leave-options");
     assert.equal(leaveOptions.status, 200);
     assert.deepEqual(
@@ -167,7 +208,7 @@ test(
   const partialSubmitted = await user.post(`/api/v1/leave-requests/${partialLeave.body.request_id}/submit`).set("x-csrf-token", userCsrf).set("if-match", "0").send({});
   assert.equal(partialSubmitted.status, 200);
   assert.equal(partialSubmitted.body.partial_minutes, 180);
-  assert.equal(Number(partialSubmitted.body.chargeable_amount), 0.375);
+  assert.equal(Number(partialSubmitted.body.chargeable_amount), 0.33);
   const partialApproved = await manager.post(`/api/v1/leave-requests/${partialLeave.body.request_id}/approve`).set("x-csrf-token", managerLogin.body.csrf_token).set("if-match", "1").send({});
   assert.equal(partialApproved.status, 200);
 
@@ -195,6 +236,32 @@ test(
   const hr = request.agent(app);
   const hrLogin = await hr.post("/api/v1/auth/login").send({ email: "hr@dev.local", password: process.env.SEED_HR_PASSWORD || process.env.SEED_ADMIN_PASSWORD });
   assert.equal(hrLogin.status, 200);
+  const leaveOverrideBalanceBefore = await pool.query(
+    "SELECT remaining,used FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3 ORDER BY as_of DESC LIMIT 1",
+    ["northstar", "ns-morgan", "ns-annual"],
+  );
+  const leaveOverride = await hr.post("/api/v1/hr/leave-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-morgan", leave_type_id: "ns-annual", start_date: "2027-12-09", end_date: "2027-12-09",
+    duration: "custom_hours", start_time: "09:00", end_time: "10:00", reason: "Integration missed hourly leave override",
+  });
+  assert.equal(leaveOverride.status, 201);
+  assert.equal(leaveOverride.body.request.status, "approved");
+  assert.equal(Number(leaveOverride.body.request.chargeable_amount), 0.11);
+  assert.equal(Number(leaveOverride.body.ledger_entry.amount), -0.11);
+  assert.equal(
+    Number(leaveOverride.body.balance.remaining),
+    Number(leaveOverrideBalanceBefore.rows[0].remaining) - 0.11,
+  );
+  assert.equal(
+    Number(leaveOverride.body.balance.used),
+    Number(leaveOverrideBalanceBefore.rows[0].used) + 0.11,
+  );
+  const leaveOverrideAudit = await pool.query(
+    "SELECT action,metadata FROM audit_events WHERE tenant_id=$1 AND target_id=$2",
+    ["northstar", leaveOverride.body.request.request_id],
+  );
+  assert.equal(leaveOverrideAudit.rows.at(-1).action, "leave_manual_override");
+  assert.equal(Number(leaveOverrideAudit.rows.at(-1).metadata.chargeable_amount), 0.11);
   const overrideOpen = await hr.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
     employee_id: "ns-morgan", local_date: "2027-12-04", clock_in_time: "07:00", reason: "Integration manual clock-in override",
   });
@@ -205,6 +272,11 @@ test(
   });
   assert.equal(overrideClosed.status, 201);
   assert.equal(overrideClosed.body.replaced_session_ids.length, 1);
+  assert.equal(overrideClosed.body.summary.local_date, "2027-12-04");
+  assert.equal(overrideClosed.body.summary.worked_mins, 540);
+  const overrideSummaryList = await hr.get("/api/v1/attendance-summaries?limit=1");
+  assert.equal(overrideSummaryList.status, 200);
+  assert.equal(overrideSummaryList.body[0].local_date, "2027-12-04");
   const overrideRows = await pool.query("SELECT status,source FROM attendance_sessions WHERE tenant_id=$1 AND employee_id=$2 AND (clock_in_at AT TIME ZONE 'Asia/Manila')::date=$3 ORDER BY clock_in_at", ["northstar", "ns-morgan", "2027-12-04"]);
   assert.deepEqual(overrideRows.rows, [{ status: "voided", source: "hr_bulk_override" }, { status: "closed", source: "hr_bulk_override" }]);
   const overrideAudit = await pool.query("SELECT action,metadata FROM audit_events WHERE tenant_id=$1 AND target_id=$2", ["northstar", overrideClosed.body.session.session_id]);
@@ -212,6 +284,8 @@ test(
   assert.equal(overrideAudit.rows.at(-1).metadata.replaced_session_ids.length, 1);
   const userOverrideForbidden = await user.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", userCsrf).send({ employee_id: "ns-morgan", local_date: "2027-12-05", clock_in_time: "08:00", reason: "Should be forbidden" });
   assert.equal(userOverrideForbidden.status, 403);
+  const userLeaveOverrideForbidden = await user.post("/api/v1/hr/leave-overrides").set("x-csrf-token", userCsrf).send({ employee_id: "ns-morgan" });
+  assert.equal(userLeaveOverrideForbidden.status, 403);
 
     const audit = await pool.query(
       "SELECT action FROM audit_events WHERE tenant_id = $1 AND target_id = $2 ORDER BY occurred_at",
@@ -273,6 +347,7 @@ test(
     const auditCsv = await admin.get("/api/v1/audit-events/export.csv?q=seed");
     assert.equal(auditCsv.status, 200);
     assert.match(auditCsv.text, /event_id/);
+    assert.match(auditCsv.text, /target_name/);
     const directory = await admin
       .post("/api/v1/hr/directory")
       .set("x-csrf-token", context.body.csrf_token)

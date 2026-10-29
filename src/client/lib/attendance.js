@@ -1,14 +1,13 @@
 export const completedRecordedSeconds = ({
   summaryMinutes,
   closedSessionSeconds,
-  isOvertimeEligible,
   maxDailyMins,
 }) => {
   const seconds = Math.max(
     Math.max(0, Number(summaryMinutes) || 0) * 60,
     Math.max(0, Number(closedSessionSeconds) || 0),
   );
-  if (isOvertimeEligible || maxDailyMins === null || maxDailyMins === undefined)
+  if (maxDailyMins === null || maxDailyMins === undefined)
     return seconds;
   const limitSeconds = Math.max(0, Number(maxDailyMins) || 0) * 60;
   return Math.min(seconds, limitSeconds);
@@ -18,7 +17,6 @@ export const weeklyCompletedSeconds = ({
   dates,
   summaries,
   employeeId,
-  isOvertimeEligible,
   maxDailyMins,
 }) => {
   const minutesByDate = new Map();
@@ -34,7 +32,6 @@ export const weeklyCompletedSeconds = ({
     seconds: completedRecordedSeconds({
       summaryMinutes: minutesByDate.get(localDate) || 0,
       closedSessionSeconds: 0,
-      isOvertimeEligible,
       maxDailyMins,
     }),
   }));
@@ -42,4 +39,20 @@ export const weeklyCompletedSeconds = ({
     days,
     totalSeconds: days.reduce((sum, day) => sum + day.seconds, 0),
   };
+};
+
+export const employeePresence = ({ employeeId, sessions, leaveRequests, localDate }) => {
+  const onLeave = (leaveRequests || []).some(
+    (item) =>
+      item.employee_id === employeeId &&
+      item.status === "approved" &&
+      item.start_date <= localDate &&
+      item.end_date >= localDate,
+  );
+  if (onLeave) return "on_leave";
+  return (sessions || []).some(
+    (item) => item.employee_id === employeeId && item.status === "open",
+  )
+    ? "clocked_in"
+    : "clocked_out";
 };

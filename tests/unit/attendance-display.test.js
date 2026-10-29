@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   completedRecordedSeconds,
+  employeePresence,
   weeklyCompletedSeconds,
 } from "../../src/client/lib/attendance.js";
 
@@ -41,7 +42,7 @@ test("an open session by itself leaves recorded hours at zero", () => {
   );
 });
 
-test("overtime-eligible jobs remain uncapped", () => {
+test("configured daily limits also cap overtime-eligible jobs on the dashboard", () => {
   assert.equal(
     completedRecordedSeconds({
       summaryMinutes: 540,
@@ -49,7 +50,7 @@ test("overtime-eligible jobs remain uncapped", () => {
       isOvertimeEligible: true,
       maxDailyMins: 480,
     }),
-    9 * 60 * 60,
+    8 * 60 * 60,
   );
 });
 
@@ -80,4 +81,21 @@ test("weekly completed hours include weekdays, cap each day, and retain history"
   });
   assert.equal(result.totalSeconds, (480 + 420) * 60);
   assert.deepEqual(result.days.map((day) => day.seconds / 60), [480, 420, 0, 0, 0]);
+});
+
+test("approved leave replaces clocked-in status in Who's in", () => {
+  assert.equal(
+    employeePresence({
+      employeeId: "employee-1",
+      localDate: "2026-10-30",
+      sessions: [{ employee_id: "employee-1", status: "open" }],
+      leaveRequests: [{
+        employee_id: "employee-1",
+        status: "approved",
+        start_date: "2026-10-30",
+        end_date: "2026-10-30",
+      }],
+    }),
+    "on_leave",
+  );
 });
