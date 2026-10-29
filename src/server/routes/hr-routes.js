@@ -9,6 +9,7 @@ export const hrRoutes = (app, requireCapability) => {
   router.post("/directory/:employee_id/reset-password", requireCapability("users:write"), send(service.resetPassword));
   router.post("/directory/:employee_id/invitation/link", requireCapability("users:write"), send(service.generateDirectoryInvitationLink));
   router.get("/my-job-profile", send(service.getOwnJobProfile));
+  router.get("/my-leave-options", send(service.getOwnLeaveOptions));
   router.post("/attendance-overrides", requireCapability("attendance:override"), send(service.createAttendanceOverride, 201));
   app.use("/api/v1/hr", router);
 };

@@ -315,6 +315,63 @@ export const getOwnJobProfile = async (req) => withTransaction(async (client) =>
   return result.rows[0];
 });
 
+export const getOwnLeaveOptions = async (req) => withTransaction(async (client) => {
+  const result = await client.query(
+    `SELECT DISTINCT ON (p.leave_type_id)
+            p.policy_id,
+            p.leave_type_id,
+            lt.name,
+            lt.code,
+            lt.unit,
+            lt.is_paid,
+            lt.color,
+            lt.description,
+            p.annual_allotment,
+            p.accrual_rule,
+            p.carry_over_limit,
+            p.allow_negative,
+            p.allow_partial_day,
+            b.balance_id,
+            b.period,
+            COALESCE(b.accrued, 0) AS accrued,
+            COALESCE(b.carried_over, 0) AS carried_over,
+            COALESCE(b.manual_adjustments, 0) AS manual_adjustments,
+            COALESCE(b.used, 0) AS used,
+            COALESCE(b.pending, 0) AS pending,
+            COALESCE(b.remaining, 0) AS remaining,
+            COALESCE(b.remaining, 0) - COALESCE(b.pending, 0) AS available,
+            b.as_of
+       FROM employees e
+       JOIN tenants t
+         ON t.tenant_id = e.tenant_id
+       JOIN job_leave_policies p
+         ON p.tenant_id = e.tenant_id
+        AND p.job_id = e.job_id
+       JOIN leave_types lt
+         ON lt.tenant_id = p.tenant_id
+        AND lt.leave_type_id = p.leave_type_id
+       LEFT JOIN LATERAL (
+         SELECT lb.*
+           FROM leave_balances lb
+          WHERE lb.tenant_id = e.tenant_id
+            AND lb.employee_id = e.employee_id
+            AND lb.leave_type_id = p.leave_type_id
+          ORDER BY lb.as_of DESC, lb.balance_id DESC
+          LIMIT 1
+       ) b ON true
+      WHERE e.tenant_id = $1
+        AND e.employee_id = $2
+        AND e.status = 'active'
+        AND p.status = 'active'
+        AND lt.status = 'active'
+        AND p.effective_from <= (CURRENT_TIMESTAMP AT TIME ZONE t.timezone)::date
+        AND (p.effective_to IS NULL OR p.effective_to >= (CURRENT_TIMESTAMP AT TIME ZONE t.timezone)::date)
+      ORDER BY p.leave_type_id, p.effective_from DESC, p.policy_id`,
+    [req.tenantId, req.actor.employee_id],
+  );
+  return result.rows;
+});
+
 const localTimeMinutes = (value, field) => {
   if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value))
     throw new HttpError(422, "Invalid Request", `${field} must use HH:MM format.`);

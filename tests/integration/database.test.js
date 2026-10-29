@@ -42,6 +42,20 @@ test(
       (await user.get("/api/v1/employees").set("x-tenant-id", "harbor")).status,
       403,
     );
+    const leaveOptions = await user.get("/api/v1/hr/my-leave-options");
+    assert.equal(leaveOptions.status, 200);
+    assert.deepEqual(
+      leaveOptions.body.map((option) => option.leave_type_id).sort(),
+      ["ns-annual", "ns-sick"],
+    );
+    const annualOption = leaveOptions.body.find((option) => option.leave_type_id === "ns-annual");
+    assert.equal(Number(annualOption.remaining), 13);
+    assert.equal(Number(annualOption.pending), 2);
+    assert.equal(Number(annualOption.available), 11);
+    await pool.query(
+      "UPDATE leave_balances SET remaining=11 WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3",
+      ["northstar", "ns-morgan", "ns-annual"],
+    );
     const balanceBeforeCancellation = await pool.query(
       "SELECT remaining FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3 ORDER BY as_of DESC LIMIT 1",
       ["northstar", "ns-morgan", "ns-annual"],
@@ -53,10 +67,10 @@ test(
       .send({
         employee_id: "ns-morgan",
         leave_type_id: "ns-annual",
-        start_date: "2027-12-06",
-        end_date: "2027-12-07",
+        start_date: "2027-12-13",
+        end_date: "2027-12-17",
         partial_day: "none",
-        chargeable_amount: 2,
+        chargeable_amount: 5,
         reason: "Integration verification leave",
         attachment_ids: [],
         status: "draft",
@@ -99,7 +113,7 @@ test(
     );
     assert.equal(ledger.rowCount, 1);
     assert.equal(ledger.rows[0].entry_type, "usage");
-    assert.equal(Number(ledger.rows[0].amount), -2);
+    assert.equal(Number(ledger.rows[0].amount), -5);
     const cancelled = await user
       .post(`/api/v1/leave-requests/${created.body.request_id}/cancel`)
       .set("x-csrf-token", userCsrf)
@@ -117,8 +131,8 @@ test(
         entry_type: row.entry_type,
       })),
       [
-        { amount: -2, entry_type: "usage" },
-        { amount: 2, entry_type: "reversal" },
+        { amount: -5, entry_type: "usage" },
+        { amount: 5, entry_type: "reversal" },
       ],
     );
     const balanceAfterCancellation = await pool.query(

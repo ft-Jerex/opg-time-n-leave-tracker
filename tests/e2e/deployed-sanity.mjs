@@ -154,15 +154,9 @@ await run("hr-personal-and-team-boundaries", "hr", desktop, async (page) => {
   await page.getByRole("heading", { name: "Leave" }).waitFor();
   const balances = (await api(page, "leave-balances")).body;
   assert.ok(balances.some((row) => row.employee_id !== employee.employee_id), "HR test data does not include tenant-wide balances");
-  const leaveTypes = (await api(page, "leave-types")).body;
-  const personalBalances = balances.filter((row) => row.employee_id === employee.employee_id);
+  const leaveOptions = (await api(page, "hr/my-leave-options")).body;
   const renderedAllowanceNames = await page.locator("main p.text-sm.font-bold.text-primary").allTextContents();
-  assert.deepEqual([...renderedAllowanceNames].sort(), personalBalances.map((balance) => leaveTypes.find((row) => row.leave_type_id === balance.leave_type_id).name).sort(), "HR personal Leave renders another employee's allowance");
-  for (const balance of balances.filter((row) => row.employee_id !== employee.employee_id)) {
-    const type = leaveTypes.find((row) => row.leave_type_id === balance.leave_type_id);
-    if (!balances.some((row) => row.employee_id === employee.employee_id && row.leave_type_id === balance.leave_type_id))
-      assert.equal(await page.getByText(type.name, { exact: true }).count(), 0, "HR personal Leave renders another employee's allowance");
-  }
+  assert.deepEqual([...renderedAllowanceNames].sort(), leaveOptions.map((option) => option.name).sort(), "HR personal Leave does not match the signed-in employee's job mappings");
   await page.getByRole("button", { name: "Attendance", exact: true }).click();
   await page.getByRole("heading", { name: "Attendance" }).waitFor();
   const summaries = (await api(page, "attendance-summaries")).body;

@@ -1,4 +1,4 @@
-import type { EntityMap, User } from "../domain/types";
+import type { EntityMap, LeaveOption, User } from "../domain/types";
 
 export interface ProblemDetails {
   type: string;
@@ -157,6 +157,7 @@ export const api = {
   createAttendanceOverride: (body: Record<string, unknown>) =>
     request<Record<string, unknown>>("/hr/attendance-overrides", { method: "POST", body }),
   myJobProfile: () => request<Record<string, unknown>>("/hr/my-job-profile"),
+  myLeaveOptions: () => request<LeaveOption[]>("/hr/my-leave-options"),
   report: (preset: string, query: Record<string, string | number> = {}) =>
     request<Record<string, unknown>>(`/reports/${preset}?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`),
   downloadCsv: (path: string) => download(path),

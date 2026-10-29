@@ -70,7 +70,11 @@ const administratorResources = [
   "audit-events",
 ];
 const resourceNames = [...employeeResources, ...administratorResources];
-const emptyData = { ...Object.fromEntries(resourceNames.map((name) => [name, []])), "job-profile": null };
+const emptyData = {
+  ...Object.fromEntries(resourceNames.map((name) => [name, []])),
+  "job-profile": null,
+  "leave-options": [],
+};
 
 const human = (value = "") =>
   value
@@ -818,9 +822,7 @@ function Dashboard({
   const summaries = data["attendance-summaries"].filter(
     (item) => item.employee_id === employee?.employee_id,
   );
-  const balances = data["leave-balances"].filter(
-    (item) => item.employee_id === employee?.employee_id,
-  );
+  const leaveOptions = data["leave-options"] || [];
   const requests = data["leave-requests"].filter(
     (item) => item.employee_id === employee?.employee_id,
   );
@@ -925,12 +927,7 @@ function Dashboard({
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          [
-            formatLeaveAmount(
-              balances.reduce((sum, b) => sum + Number(b.remaining), 0),
-            ),
-            "Leave remaining",
-          ],
+          [leaveOptions.length, "Leave types available"],
           [
             requests.filter((r) => r.status === "pending").length,
             "Pending requests",
@@ -950,6 +947,37 @@ function Dashboard({
           </Card>
         ))}
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Your leave balances</CardTitle>
+          <CardDescription>Leave types assigned to your current job.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {leaveOptions.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {leaveOptions.map((option) => (
+                <button
+                  key={option.policy_id}
+                  type="button"
+                  onClick={() => onNavigate("leave")}
+                  className="rounded-xl border p-4 text-left transition-colors hover:border-primary hover:bg-orange-50"
+                >
+                  <p className="text-sm font-bold text-primary">{option.name}</p>
+                  <p className="mt-1 text-2xl font-extrabold">
+                    {formatLeaveAmount(option.remaining)}{" "}
+                    <span className="text-sm font-medium">{option.unit} remaining</span>
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatLeaveAmount(option.pending)} pending · {formatLeaveAmount(option.available)} available
+                  </p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <Empty title="No leave policies assigned" detail="Your current job has no active leave mappings." />
+          )}
+        </CardContent>
+      </Card>
       <WeeklyRecordedHours data={data} employee={employee} tenant={tenant} />
       <Card>
         <CardHeader>
@@ -1306,9 +1334,7 @@ function OvertimeRequest({ data, employee, refresh, notify }) {
 function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   // HR can load tenant-wide data for team and organization workspaces, but
   // this page is the signed-in employee's personal leave workspace.
-  const personalBalances = data["leave-balances"].filter(
-    (item) => item.employee_id === employee.employee_id,
-  );
+  const leaveOptions = data["leave-options"] || [];
   const personalLedgerEntries = data["leave-ledger-entries"].filter(
     (item) => item.employee_id === employee.employee_id,
   );
@@ -1319,13 +1345,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   const [busy, setBusy] = useState(false);
   const [formErrors, setFormErrors] = useState({});
   const formRef = useRef(null);
-  const eligibleTypeIds = new Set(
-    personalBalances.map((item) => item.leave_type_id),
-  );
-  const types = data["leave-types"].filter(
-    (item) =>
-      item.status === "active" && eligibleTypeIds.has(item.leave_type_id),
-  );
+  const types = leaveOptions;
   const [form, setForm] = useState({
     leave_type_id: "",
     start_date: "",
@@ -1335,6 +1355,21 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
     partial_end_time: "10:00",
     reason: "",
   });
+  const selectedType = types.find((type) => type.leave_type_id === form.leave_type_id);
+  const selectedJob = data["job-profile"];
+  const customMinutes = timeIntervalMinutes(form.partial_start_time, form.partial_end_time);
+  const projectedDays = Math.max(
+    0,
+    form.partial_day === "custom_hours"
+      ? form.start_date === form.end_date && customMinutes > 0
+        ? selectedType?.unit === "hours"
+          ? customMinutes / 60
+          : customMinutes / Number(selectedJob?.standard_daily_mins || 480)
+        : 0
+      : chargeableDays(form.start_date, form.end_date, data.holidays) -
+        (form.partial_day === "none" ? 0 : 0.5),
+  );
+  const selectedBalance = selectedType;
   const updateForm = (patch) => {
     setForm((current) => ({ ...current, ...patch }));
     setFormErrors((current) => {
@@ -1365,12 +1400,23 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
       next.dateRange = "Choose at least one working day; weekends and holidays are not chargeable."
     }
     if (!form.reason.trim()) next.reason = "Explain why you need this leave.";
+    if (
+      selectedType &&
+      !selectedType.allow_negative &&
+      projectedDays > Number(selectedType.available)
+    ) {
+      next.form = `This request exceeds the ${formatLeaveAmount(selectedType.available)} ${selectedType.unit} currently available after pending requests.`;
+    }
     return next;
   };
   useEffect(() => {
     if (types[0] && !form.leave_type_id)
       setForm((value) => ({ ...value, leave_type_id: types[0].leave_type_id }));
   }, [types, form.leave_type_id]);
+  useEffect(() => {
+    if (selectedType && !selectedType.allow_partial_day && form.partial_day !== "none")
+      setForm((value) => ({ ...value, partial_day: "none" }));
+  }, [selectedType, form.partial_day]);
   const submit = async (event) => {
     event.preventDefault();
     const nextErrors = validateForm();
@@ -1419,23 +1465,6 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   };
   const typeName = (id) =>
     types.find((type) => type.leave_type_id === id)?.name || "Leave";
-  const selectedType = types.find((type) => type.leave_type_id === form.leave_type_id);
-  const selectedJob = data["job-profile"];
-  const customMinutes = timeIntervalMinutes(form.partial_start_time, form.partial_end_time);
-  const projectedDays = Math.max(
-    0,
-    form.partial_day === "custom_hours"
-      ? form.start_date === form.end_date && customMinutes > 0
-        ? selectedType?.unit === "hours"
-          ? customMinutes / 60
-          : customMinutes / Number(selectedJob?.standard_daily_mins || 480)
-        : 0
-      : chargeableDays(form.start_date, form.end_date, data.holidays) -
-        (form.partial_day === "none" ? 0 : 0.5),
-  );
-  const selectedBalance = personalBalances.find(
-    (item) => item.leave_type_id === form.leave_type_id,
-  );
   const [busyRequestId, setBusyRequestId] = useState("");
   const transitionRequest = async (item, action, confirmation, successMessage) => {
     if (!window.confirm(confirmation)) return;
@@ -1505,20 +1534,23 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
           {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{formatLeaveAmount(item.chargeable_amount)}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
-      {personalBalances.length ? (
+      {leaveOptions.length ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {personalBalances.map((item) => (
-            <Card key={item.balance_id}>
+          {leaveOptions.map((item) => (
+            <Card key={item.policy_id}>
               <CardContent className="pt-6">
                 <p className="text-sm font-bold text-primary">
                   {typeName(item.leave_type_id)}
                 </p>
                 <p className="mt-1 text-3xl font-extrabold">
                   {formatLeaveAmount(item.remaining)}{" "}
-                  <span className="text-base font-medium">{item.unit}</span>
+                  <span className="text-base font-medium">{item.unit} remaining</span>
                 </p>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {formatLeaveAmount(item.pending)} pending · {formatLeaveAmount(item.used)} used
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {formatLeaveAmount(item.available)} {item.unit} available after pending requests
                 </p>
                 <details className="mt-4 text-sm">
                   <summary className="cursor-pointer font-semibold text-primary">
@@ -1528,13 +1560,13 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                     <Row label="Accrued" value={formatLeaveAmount(item.accrued)} />
                     <Row label="Carried over" value={formatLeaveAmount(item.carried_over)} />
                     <Row label="Manual" value={formatLeaveAmount(item.manual_adjustments)} />
-                    <Row label="As of" value={date(item.as_of)} />
+                    <Row label="Annual allowance" value={formatLeaveAmount(item.annual_allotment)} />
+                    <Row label="As of" value={item.as_of ? date(item.as_of) : "Not credited yet"} />
                   </div>
                   <div className="mt-3 divide-y">
                     {personalLedgerEntries
                       .filter(
                         (entry) =>
-                          entry.employee_id === item.employee_id &&
                           entry.leave_type_id === item.leave_type_id,
                       )
                       .map((entry) => (
@@ -1630,7 +1662,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
               >
                 {types.map((type) => (
                   <option key={type.leave_type_id} value={type.leave_type_id}>
-                    {type.name}
+                    {type.name} — {formatLeaveAmount(type.remaining)} {type.unit} remaining
                   </option>
                 ))}
               </select>
@@ -1660,6 +1692,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
               <select
                 aria-label="Leave duration"
                 value={form.partial_day}
+                disabled={selectedType && !selectedType.allow_partial_day}
                 onChange={(e) =>
                   updateForm({ partial_day: e.target.value })
                 }
@@ -1670,6 +1703,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                 <option value="end_half">Half day on end</option>
                 <option value="custom_hours">Custom hours</option>
               </select>
+              {selectedType && !selectedType.allow_partial_day ? <span className="mt-1 block text-xs font-normal text-muted-foreground">This leave policy allows full days only.</span> : null}
             </label>
             {form.partial_day === "custom_hours" && (
               <div className="grid gap-3 sm:grid-cols-2">
@@ -1690,11 +1724,11 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
               <b>Request preview</b>
               <p className="mt-1">Projected charge: {!form.start_date || !form.end_date || formErrors.dateRange || formErrors.end_date ? "Enter a valid working-day range" : `${projectedDays.toFixed(2)} ${selectedType?.unit || "unit"}`}</p>
               <p>
-                Projected remaining:{" "}
+                Projected available after this request:{" "}
                 {!form.start_date || !form.end_date || formErrors.dateRange || formErrors.end_date
                   ? "—"
                   : selectedBalance
-                  ? formatLeaveAmount(Number(selectedBalance.remaining) - projectedDays)
+                  ? formatLeaveAmount(Number(selectedBalance.available) - projectedDays)
                   : "Unavailable"}
               </p>
             </div>
@@ -4789,6 +4823,7 @@ function App() {
       const values = await Promise.all([
         ...selectedResources.map((name) => api.list(name)),
         api.myJobProfile(),
+        api.myLeaveOptions(),
       ]);
       setData({
         ...emptyData,
@@ -4796,6 +4831,7 @@ function App() {
           selectedResources.map((name, index) => [name, values[index]]),
         ),
         "job-profile": values[selectedResources.length],
+        "leave-options": values[selectedResources.length + 1],
       });
     } catch (failure) {
       if (failure.status === 401) {

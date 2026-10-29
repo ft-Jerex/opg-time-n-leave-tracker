@@ -555,6 +555,39 @@ export const transition = async (
           "This request requires a validated attachment.",
         );
       current.chargeable_amount = amount;
+      let requestBalance = await client.query(
+        `SELECT *
+           FROM leave_balances
+          WHERE tenant_id = $1 AND employee_id = $2 AND leave_type_id = $3
+          ORDER BY as_of DESC, balance_id DESC
+          LIMIT 1
+          FOR UPDATE`,
+        [tenantId, current.employee_id, current.leave_type_id],
+      );
+      if (!requestBalance.rowCount) {
+        requestBalance = await client.query(
+          `INSERT INTO leave_balances (
+             balance_id, tenant_id, employee_id, leave_type_id, period,
+             accrued, carried_over, manual_adjustments, used, pending,
+             remaining, unit, as_of
+           )
+           SELECT $1, $2, $3, $4,
+                  to_char((CURRENT_TIMESTAMP AT TIME ZONE t.timezone)::date, 'YYYY'),
+                  0, 0, 0, 0, 0, 0, $5,
+                  (CURRENT_TIMESTAMP AT TIME ZONE t.timezone)::date
+             FROM tenants t
+            WHERE t.tenant_id = $2
+           RETURNING *`,
+          [id(), tenantId, current.employee_id, current.leave_type_id, policy.rows[0].leave_unit],
+        );
+      }
+      const available = Number(requestBalance.rows[0].remaining) - Number(requestBalance.rows[0].pending);
+      if (!policy.rows[0].allow_negative && available < amount)
+        throw new HttpError(
+          422,
+          "Insufficient Leave Balance",
+          "The request exceeds the balance available after pending requests.",
+        );
     }
     const overlap = await client.query(
       `SELECT 1 FROM leave_requests WHERE tenant_id = $1 AND employee_id = $2 AND status IN ('pending','approved') AND request_id <> $3 AND start_date <= $5 AND end_date >= $4 LIMIT 1`,
@@ -574,14 +607,30 @@ export const transition = async (
       );
     if (nextStatus === "approved") {
       const balance = await client.query(
-        `SELECT b.remaining, b.pending, p.allow_negative FROM leave_balances b JOIN employees e ON e.tenant_id = b.tenant_id AND e.employee_id = b.employee_id JOIN job_leave_policies p ON p.tenant_id = e.tenant_id AND p.job_id = e.job_id AND p.leave_type_id = b.leave_type_id AND p.status = 'active' WHERE b.tenant_id = $1 AND b.employee_id = $2 AND b.leave_type_id = $3 ORDER BY b.as_of DESC LIMIT 1`,
-        [tenantId, current.employee_id, current.leave_type_id],
+        `SELECT b.remaining, b.pending, p.allow_negative
+           FROM leave_balances b
+           JOIN employees e
+             ON e.tenant_id = b.tenant_id AND e.employee_id = b.employee_id
+           JOIN job_leave_policies p
+             ON p.tenant_id = e.tenant_id
+            AND p.job_id = e.job_id
+            AND p.leave_type_id = b.leave_type_id
+            AND p.status = 'active'
+            AND p.effective_from <= $4
+            AND (p.effective_to IS NULL OR p.effective_to >= $5)
+          WHERE b.tenant_id = $1 AND b.employee_id = $2 AND b.leave_type_id = $3
+          ORDER BY b.as_of DESC, b.balance_id DESC, p.effective_from DESC
+          LIMIT 1
+          FOR UPDATE OF b`,
+        [tenantId, current.employee_id, current.leave_type_id, current.start_date, current.end_date],
       );
+      const otherPending = balance.rowCount
+        ? Math.max(0, Number(balance.rows[0].pending) - Number(current.chargeable_amount))
+        : 0;
       if (
-        balance.rowCount &&
-        !balance.rows[0].allow_negative &&
-        Number(balance.rows[0].remaining) - Number(balance.rows[0].pending) <
-          Number(current.chargeable_amount)
+        !balance.rowCount ||
+        (!balance.rows[0].allow_negative &&
+          Number(balance.rows[0].remaining) - otherPending < Number(current.chargeable_amount))
       )
         throw new HttpError(
           422,

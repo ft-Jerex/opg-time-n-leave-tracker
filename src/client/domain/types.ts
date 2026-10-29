@@ -162,6 +162,31 @@ export interface LeaveBalance {
   unit: "days" | "hours";
   as_of: string;
 }
+export interface LeaveOption {
+  policy_id: string;
+  leave_type_id: string;
+  name: string;
+  code: string;
+  unit: "days" | "hours";
+  is_paid: boolean;
+  color: string;
+  description: string | null;
+  annual_allotment: number;
+  accrual_rule: JsonObject;
+  carry_over_limit: number;
+  allow_negative: boolean;
+  allow_partial_day: boolean;
+  balance_id: string | null;
+  period: string | null;
+  accrued: number;
+  carried_over: number;
+  manual_adjustments: number;
+  used: number;
+  pending: number;
+  remaining: number;
+  available: number;
+  as_of: string | null;
+}
 export interface LeaveLedgerEntry {
   entry_id: string;
   tenant_id: string;
