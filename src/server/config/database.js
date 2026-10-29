@@ -1,19 +1,25 @@
 import pg from "pg";
 import "dotenv/config";
+import { SUPABASE_ROOT_CA_2021 } from "./supabase-ca.js";
 
 const { Pool } = pg;
+const connectionUrl = process.env.DATABASE_URL
+  ? new URL(process.env.DATABASE_URL)
+  : null;
+const isSupabaseDatabase =
+  connectionUrl &&
+  (connectionUrl.hostname.endsWith(".pooler.supabase.com") ||
+    /^db\.[a-z0-9]+\.supabase\.co$/i.test(connectionUrl.hostname));
 const sslCa = process.env.DB_SSL_CA_BASE64
   ? Buffer.from(process.env.DB_SSL_CA_BASE64, "base64").toString("utf8")
-  : process.env.DB_SSL_CA?.replaceAll("\\n", "\n");
+  : process.env.DB_SSL_CA?.replaceAll("\\n", "\n") ||
+    (isSupabaseDatabase ? SUPABASE_ROOT_CA_2021 : undefined);
 const hasExplicitSslConfig = process.env.DB_SSL === "true";
 
 // node-postgres gives SSL query parameters in DATABASE_URL precedence over the
 // explicit `ssl` object below. That would silently discard DB_SSL_CA. Keep
 // DATABASE_URL compatible with Supabase while making certificate verification
 // controlled by the server environment instead of URL query-string state.
-const connectionUrl = process.env.DATABASE_URL
-  ? new URL(process.env.DATABASE_URL)
-  : null;
 if (connectionUrl && hasExplicitSslConfig) {
   for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) {
     connectionUrl.searchParams.delete(parameter);

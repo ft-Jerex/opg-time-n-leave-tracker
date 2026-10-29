@@ -43,7 +43,7 @@ Platform Administrators can copy a one-time invitation link from the organizatio
 
 HR Managers can create an employee portal user without handling a password by leaving the temporary-password field blank. The API generates a tenant-scoped, one-time invitation at `POST /api/v1/hr/directory` or `PUT /api/v1/hr/directory/:employee_id` with `account.enabled=true`, `account.invite=true`; no email is sent. The returned link is copied for the HR Manager to share manually. A pending link can be rotated at `POST /api/v1/hr/directory/:employee_id/invitation/link`. These links use the same `INVITATION_TTL_HOURS` and `INVITATION_BASE_URL` settings, are stored only as hashes, and must be shared as bearer credentials.
 
-If the Vercel function reports `SELF_SIGNED_CERT_IN_CHAIN`, download the Supabase root certificate from Database Settings → SSL Configuration. Add it to Vercel as `DB_SSL_CA` (preserving PEM newlines) or as `DB_SSL_CA_BASE64` using a base64-encoded PEM. Keep `DB_SSL_REJECT_UNAUTHORIZED=true`; do not bypass certificate verification in Production.
+The application bundles Supabase's public 2021 root CA for Supabase database hosts. If Supabase rotates that certificate, download the current root certificate from Database Settings → SSL Configuration and add it to Vercel as `DB_SSL_CA` (preserving PEM newlines) or `DB_SSL_CA_BASE64` (base64-encoded PEM). Keep `DB_SSL_REJECT_UNAUTHORIZED=true`; do not bypass certificate verification in Production.
 
 Deploy Preview first. Confirm SPA refreshes, `/api/v1/auth/me`, secure cookies, CSRF writes, reports, CSV downloads, and tenant context switching before promoting the deployment.
 
