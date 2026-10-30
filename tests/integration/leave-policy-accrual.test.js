@@ -144,10 +144,10 @@ test(
       `);
 
       const monthlyRun = await client.query(
-        "SELECT app_private.run_monthly_leave_accrual($1,$2) AS credited",
-        ["accrual-test", "2026-11-01"],
+        "SELECT app_private.run_due_monthly_leave_accrual($1) AS credited",
+        ["2026-10-31T16:15:00Z"],
       );
-      assert.equal(monthlyRun.rows[0].credited, 1);
+      assert.ok(monthlyRun.rows[0].credited >= 1);
       const monthlyBalance = await client.query(
         `SELECT accrued,carried_over,manual_adjustments,used,pending,remaining,period
            FROM leave_balances WHERE balance_id='accrual-balance'`,
@@ -185,8 +185,8 @@ test(
         ],
       );
       const monthlyRetry = await client.query(
-        "SELECT app_private.run_monthly_leave_accrual($1,$2) AS credited",
-        ["accrual-test", "2026-11-01"],
+        "SELECT app_private.run_due_monthly_leave_accrual($1) AS credited",
+        ["2026-10-31T16:15:00Z"],
       );
       assert.equal(monthlyRetry.rows[0].credited, 0);
 
