@@ -2,7 +2,7 @@ import { pool } from "../config/database.js";
 import { HttpError } from "../views/problem-view.js";
 import { exportMonthlyTimesheet, monthDates } from "./monthly-timesheet-export.js";
 
-const presets = new Set(["payroll-timesheet", "organization-absenteeism", "overtime-by-department", "leave-balance-liability"]);
+const presets = new Set(["payroll-timesheet", "organization-absenteeism", "overtime-by-department", "leave-taken", "leave-balance-liability"]);
 const todayInZone = (timezone) => new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
 const firstOfMonth = (value) => `${value.slice(0, 8)}01`;
 
@@ -158,6 +158,48 @@ const overtime = async (req, info) => {
   return { rows: result.rows, basis: "Attendance-derived overtime, approved overtime requests, and non-eligible work above the daily job standard are reported separately.", title: "Overtime by department" };
 };
 
+const leaveTaken = async (req, info) => {
+  const { params, where, leaveType } = baseFilters(req, req.query.from || info.from, req.query.to || info.to);
+  params.push(leaveType);
+  const leaveTypeParameter = `$${params.length}`;
+  const result = await pool.query(
+    `SELECT lr.request_id,e.employee_id,e.employee_number,e.name,
+            d.name AS department_name,j.title AS job_title,
+            COALESCE(m.name,'') AS manager_name,lt.name AS leave_type_name,
+            lt.unit,CASE WHEN lt.is_paid THEN 'Paid' ELSE 'Unpaid' END AS payment_type,
+            lr.start_date,lr.end_date,lr.partial_day,
+            CASE WHEN lr.partial_day='custom_hours'
+                 THEN to_char(lr.partial_start_time,'HH24:MI') || '–' || to_char(lr.partial_end_time,'HH24:MI')
+                 ELSE 'Full day(s)' END AS duration,
+            lr.partial_minutes,lr.chargeable_amount::numeric,lr.reason,
+            lr.submitted_at,lr.decided_at,COALESCE(a.name,'') AS approved_by
+       FROM leave_requests lr
+       JOIN employees e
+         ON e.tenant_id=lr.tenant_id AND e.employee_id=lr.employee_id
+       JOIN departments d
+         ON d.tenant_id=e.tenant_id AND d.department_id=e.department_id
+       JOIN job_profiles j
+         ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
+       JOIN leave_types lt
+         ON lt.tenant_id=lr.tenant_id AND lt.leave_type_id=lr.leave_type_id
+       LEFT JOIN employees m
+         ON m.tenant_id=e.tenant_id AND m.employee_id=e.manager_id
+       LEFT JOIN employees a
+         ON a.tenant_id=lr.tenant_id AND a.employee_id=lr.approver_id
+      WHERE ${where.join(" AND ")}
+        AND lr.status='approved'
+        AND lr.start_date <= $3::date AND lr.end_date >= $2::date
+        AND (${leaveTypeParameter}::text IS NULL OR lr.leave_type_id=${leaveTypeParameter})
+      ORDER BY lr.start_date DESC,e.name ASC,lr.request_id ASC`,
+    params,
+  );
+  return {
+    rows: result.rows,
+    basis: "Detailed approved leave overlapping the selected date range. Draft, pending, rejected, withdrawn, and cancelled requests are excluded.",
+    title: "Approved leave taken",
+  };
+};
+
 const liability = async (req, info) => {
   const { params, where } = baseFilters(req, req.query.from || info.from, req.query.to || info.to);
   const rate = Number(info.settings?.mock_leave_valuation_rate || 1);
@@ -178,7 +220,15 @@ export const generateReport = async (req, { all = false } = {}) => {
   const preset = req.params.preset;
   if (!presets.has(preset)) throw new HttpError(404, "Not Found", "Unknown report preset.");
   const info = await tenantInfo(req.tenantId);
-  const result = preset === "payroll-timesheet" ? await payroll(req, info, all) : preset === "organization-absenteeism" ? await absenteeism(req, info) : preset === "overtime-by-department" ? await overtime(req, info) : await liability(req, info);
+  const result = preset === "payroll-timesheet"
+    ? await payroll(req, info, all)
+    : preset === "organization-absenteeism"
+      ? await absenteeism(req, info)
+      : preset === "overtime-by-department"
+        ? await overtime(req, info)
+        : preset === "leave-taken"
+          ? await leaveTaken(req, info)
+          : await liability(req, info);
   const { page, pageSize, offset } = pageOptions(req.query || {});
   const rows = all ? result.rows : result.rows.slice(offset, offset + pageSize);
   const totals = result.rows.reduce((acc, row) => { for (const [key, value] of Object.entries(row)) if (typeof value === "number") acc[key] = (acc[key] || 0) + value; return acc; }, {});

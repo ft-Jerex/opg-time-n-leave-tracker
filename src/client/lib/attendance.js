@@ -1,15 +1,16 @@
 export const completedRecordedSeconds = ({
   summaryMinutes,
   closedSessionSeconds,
-  maxDailyMins,
+  standardDailyMins,
+  isOvertimeEligible,
 }) => {
   const seconds = Math.max(
     Math.max(0, Number(summaryMinutes) || 0) * 60,
     Math.max(0, Number(closedSessionSeconds) || 0),
   );
-  if (maxDailyMins === null || maxDailyMins === undefined)
+  if (isOvertimeEligible || standardDailyMins === null || standardDailyMins === undefined)
     return seconds;
-  const limitSeconds = Math.max(0, Number(maxDailyMins) || 0) * 60;
+  const limitSeconds = Math.max(0, Number(standardDailyMins) || 0) * 60;
   return Math.min(seconds, limitSeconds);
 };
 
@@ -17,7 +18,8 @@ export const weeklyCompletedSeconds = ({
   dates,
   summaries,
   employeeId,
-  maxDailyMins,
+  standardDailyMins,
+  isOvertimeEligible,
 }) => {
   const minutesByDate = new Map();
   for (const row of summaries || []) {
@@ -32,7 +34,8 @@ export const weeklyCompletedSeconds = ({
     seconds: completedRecordedSeconds({
       summaryMinutes: minutesByDate.get(localDate) || 0,
       closedSessionSeconds: 0,
-      maxDailyMins,
+      standardDailyMins,
+      isOvertimeEligible,
     }),
   }));
   return {

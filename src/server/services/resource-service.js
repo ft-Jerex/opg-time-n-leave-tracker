@@ -8,6 +8,7 @@ import {
 } from "../validation/schema-validator.js";
 import * as repository from "../models/resource-model.js";
 import { partialLeaveCharge } from "../../shared/leave.js";
+import { refreshAttendanceSummary } from "./attendance-summary-service.js";
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -705,31 +706,16 @@ export const transition = async (
     );
     const clockInAt = times.rows[0].clock_in_at;
     const clockOutAt = times.rows[0].clock_out_at;
-    const workedMinutes = Math.round(
-      (new Date(clockOutAt) - new Date(clockInAt)) / 60000,
-    );
     await client.query(
       "INSERT INTO attendance_sessions (session_id,tenant_id,employee_id,clock_in_at,clock_out_at,source,status,version) VALUES ($1,$2,$3,$4,$5,'attendance_adjustment','closed',0)",
       [id(), tenantId, current.employee_id, clockInAt, clockOutAt],
     );
-    const summary = await client.query(
-      "UPDATE attendance_summaries SET worked_mins = $1, overtime_mins = GREATEST(0, $1 - scheduled_mins), status = 'complete', exception_codes = ARRAY[]::text[] WHERE tenant_id = $2 AND employee_id = $3 AND local_date = $4 RETURNING summary_id",
-      [workedMinutes, tenantId, current.employee_id, current.local_date],
+    await refreshAttendanceSummary(
+      client,
+      tenantId,
+      current.employee_id,
+      current.local_date,
     );
-    if (!summary.rowCount)
-      await client.query(
-        `INSERT INTO attendance_summaries (summary_id,tenant_id,employee_id,local_date,worked_mins,scheduled_mins,overtime_mins,status,exception_codes,effective_job_id)
-         SELECT $1,e.tenant_id,e.employee_id,$2,$3,j.standard_daily_mins,GREATEST(0,$3-j.standard_daily_mins),'complete',ARRAY[]::text[],e.job_id
-           FROM employees e JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
-          WHERE e.tenant_id=$4 AND e.employee_id=$5`,
-        [
-          id(),
-          current.local_date,
-          workedMinutes,
-          tenantId,
-          current.employee_id,
-        ],
-      );
   }
   if (resource === "leave-requests") {
     const balance = await client.query(
@@ -856,84 +842,21 @@ export const clockIn = async (req) =>
     }
   });
 
-const reconcileDailySummary = async (client, req, session, clockedOutAt) => {
+const reconcileDailySummary = async (client, req, session) => {
   const context = await client.query(
-    `SELECT e.job_id, j.standard_daily_mins,
-            (($3::timestamptz AT TIME ZONE t.timezone)::date) AS local_date
+    `SELECT (($3::timestamptz AT TIME ZONE t.timezone)::date) AS local_date
        FROM employees e
-       JOIN job_profiles j ON j.tenant_id = e.tenant_id AND j.job_id = e.job_id
        JOIN tenants t ON t.tenant_id = e.tenant_id
       WHERE e.tenant_id = $1 AND e.employee_id = $2`,
     [req.tenantId, req.actor.employee_id, session.clock_in_at],
   );
   if (!context.rowCount) return;
-
-  const { job_id: jobId, standard_daily_mins: scheduledMins, local_date: localDate } =
-    context.rows[0];
-  const durationMins = Math.max(
-    0,
-    Math.floor(
-      (new Date(clockedOutAt).getTime() -
-        new Date(session.clock_in_at).getTime()) /
-        60000,
-    ),
+  await refreshAttendanceSummary(
+    client,
+    req.tenantId,
+    req.actor.employee_id,
+    context.rows[0].local_date,
   );
-  const existing = await client.query(
-    `SELECT summary_id, worked_mins, scheduled_mins
-       FROM attendance_summaries
-      WHERE tenant_id = $1 AND employee_id = $2 AND local_date = $3
-      ORDER BY summary_id
-      LIMIT 1
-      FOR UPDATE`,
-    [req.tenantId, req.actor.employee_id, localDate],
-  );
-  const workedMins = (existing.rows[0]?.worked_mins || 0) + durationMins;
-  const dailySchedule = existing.rows[0]?.scheduled_mins ?? scheduledMins;
-  const overtimeMins = Math.max(0, workedMins - dailySchedule);
-  const status = workedMins >= dailySchedule ? "complete" : "below_standard";
-  const exceptionCodes = workedMins >= dailySchedule ? [] : ["SHORT_DAY"];
-
-  if (existing.rowCount) {
-    await client.query(
-      `UPDATE attendance_summaries
-          SET worked_mins = $1,
-              scheduled_mins = $2,
-              overtime_mins = $3,
-              status = $4,
-              exception_codes = $5,
-              effective_job_id = $6
-        WHERE tenant_id = $7 AND summary_id = $8`,
-      [
-        workedMins,
-        dailySchedule,
-        overtimeMins,
-        status,
-        exceptionCodes,
-        jobId,
-        req.tenantId,
-        existing.rows[0].summary_id,
-      ],
-    );
-  } else {
-    await client.query(
-      `INSERT INTO attendance_summaries
-        (summary_id, tenant_id, employee_id, local_date, worked_mins,
-         scheduled_mins, overtime_mins, status, exception_codes, effective_job_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        id(),
-        req.tenantId,
-        req.actor.employee_id,
-        localDate,
-        workedMins,
-        dailySchedule,
-        overtimeMins,
-        status,
-        exceptionCodes,
-        jobId,
-      ],
-    );
-  }
 };
 
 export const clockOut = async (req) =>
@@ -963,7 +886,7 @@ export const clockOut = async (req) =>
       },
       current.version,
     );
-    await reconcileDailySummary(client, req, current, clockedOutAt);
+    await reconcileDailySummary(client, req, current);
     await audit(client, req, "clock_out", "AttendanceSession", row.session_id);
     return validateOutput("AttendanceSession", row);
   });

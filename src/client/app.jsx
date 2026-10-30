@@ -721,7 +721,8 @@ function WeeklyRecordedHours({ data, employee, tenant }) {
     dates,
     summaries,
     employeeId,
-    maxDailyMins: jobProfile?.max_daily_mins,
+    standardDailyMins: jobProfile?.standard_daily_mins,
+    isOvertimeEligible: Boolean(jobProfile?.is_ot_eligible),
   });
   const dayLabel = (localDate) =>
     new Intl.DateTimeFormat("en", {
@@ -863,12 +864,12 @@ function Dashboard({
     )
     .reduce((sum, item) => sum + sessionSeconds(item), 0);
   const jobProfile = data["job-profile"];
-  const dailyLimitMins = jobProfile?.max_daily_mins === null || jobProfile?.max_daily_mins === undefined
+  const dailyLimitMins = jobProfile?.standard_daily_mins === null || jobProfile?.standard_daily_mins === undefined
     ? null
-    : Number(jobProfile.max_daily_mins);
+    : Number(jobProfile.standard_daily_mins);
   const uncappedTodaySeconds =
     Math.max(todayMinutes * 60, todayClosedSessionSeconds) + elapsedSeconds;
-  const todaySeconds = dailyLimitMins === null
+  const todaySeconds = dailyLimitMins === null || jobProfile?.is_ot_eligible
     ? uncappedTodaySeconds
     : Math.min(uncappedTodaySeconds, Math.max(0, dailyLimitMins) * 60);
   return (
@@ -3462,7 +3463,7 @@ function LegacyOrganizationReports({ data, tenant }) {
 }
 
 function OrganizationReports({ data, tenant }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateForTimeZone(tenant?.timezone || "UTC");
   const defaults = {
     preset: "payroll-timesheet",
     query: "",
@@ -3471,6 +3472,7 @@ function OrganizationReports({ data, tenant }) {
     manager: "all",
     job: "all",
     location: "all",
+    leaveType: "all",
     month: today.slice(0, 7),
     from: `${today.slice(0, 8)}01`,
     to: today,
@@ -3479,7 +3481,7 @@ function OrganizationReports({ data, tenant }) {
     pageSize: "25",
   };
   const [view, setView, resetView] = useDataViewState("organization-reports", defaults);
-  const { preset, query, status, department, manager, job, location, month, from, to, sort } = view;
+  const { preset, query, status, department, manager, job, location, leaveType, month, from, to, sort } = view;
   const page = Number(view.page) || 1;
   const pageSize = Number(view.pageSize) || 25;
   const [report, setReport] = useState(null);
@@ -3499,6 +3501,7 @@ function OrganizationReports({ data, tenant }) {
         manager_id: manager === "all" ? "" : manager,
         job_id: job === "all" ? "" : job,
         location_id: location === "all" ? "" : location,
+        leave_type_id: leaveType === "all" ? "" : leaveType,
         from: reportFrom,
         to: reportTo,
         sort,
@@ -3510,7 +3513,7 @@ function OrganizationReports({ data, tenant }) {
     } finally {
       setLoading(false);
     }
-  }, [preset, query, status, department, manager, job, location, selectedMonth, from, to, sort, page, pageSize]);
+  }, [preset, query, status, department, manager, job, location, leaveType, selectedMonth, from, to, sort, page, pageSize]);
   useEffect(() => { load(); }, [load]);
   const download = async () => {
     try {
@@ -3524,6 +3527,7 @@ function OrganizationReports({ data, tenant }) {
         manager_id: manager === "all" ? "" : manager,
         job_id: job === "all" ? "" : job,
         location_id: location === "all" ? "" : location,
+        leave_type_id: leaveType === "all" ? "" : leaveType,
         ...(preset === "payroll-timesheet" ? { month: selectedMonth } : { from: reportFrom, to: reportTo }),
         sort,
       })}`);
@@ -3540,15 +3544,17 @@ function OrganizationReports({ data, tenant }) {
      ? [["name", "Employee"], ["department_name", "Department"], ["manager_name", "Manager"], ["worked_mins", "Worked minutes"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["paid_leave_units", "Paid leave"], ["unpaid_leave_units", "Unpaid leave"]]
     : preset === "organization-absenteeism"
       ? [["name", "Employee"], ["department_name", "Department"], ["absent_days", "Absent"], ["leave_days", "Approved leave"], ["incomplete_days", "Incomplete"], ["recorded_days", "Recorded days"]]
-      : preset === "overtime-by-department"
+       : preset === "overtime-by-department"
          ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["limit_exception_mins", "Limit exceptions"]]
-        : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
+         : preset === "leave-taken"
+           ? [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["payment_type", "Pay"], ["start_date", "From"], ["end_date", "To"], ["duration", "Duration"], ["chargeable_amount", "Charged"], ["unit", "Unit"], ["approved_by", "Approved by"], ["reason", "Reason"]]
+           : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
   const setFilter = (key, value) => setView({ [key]: value, page: "1" });
   return (
     <div className="space-y-5">
       <Header title="Organization reports" detail="Tenant-wide reporting for HR and payroll preparation. Exports include every matching row." action={<Button onClick={download} disabled={loading}>{preset === "payroll-timesheet" ? "Export monthly time logs" : "Export all filtered rows"}</Button>} />
       <div className="flex flex-wrap gap-2">
-        {[["payroll-timesheet", "Payroll timesheet"], ["organization-absenteeism", "Absenteeism"], ["overtime-by-department", "Overtime by department"], ["leave-balance-liability", "Leave liability"]].map(([value, label]) => <Button key={value} variant={preset === value ? "secondary" : "outline"} onClick={() => setView({ preset: value, page: "1" })}>{label}</Button>)}
+        {[["payroll-timesheet", "Payroll timesheet"], ["organization-absenteeism", "Absenteeism"], ["overtime-by-department", "Overtime by department"], ["leave-taken", "Leave taken"], ["leave-balance-liability", "Leave liability"]].map(([value, label]) => <Button key={value} variant={preset === value ? "secondary" : "outline"} onClick={() => setView({ preset: value, page: "1" })}>{label}</Button>)}
       </div>
       <FilterToolbar
         viewKey="organization-reports"
@@ -3566,6 +3572,7 @@ function OrganizationReports({ data, tenant }) {
           { id: "manager", label: "Manager", value: manager, onChange: (value) => setFilter("manager", value), options: [{ value: "all", label: "All managers" }, ...data.employees.filter((item) => item.status === "active").map((item) => ({ value: item.employee_id, label: item.name }))] },
           { id: "job", label: "Job", value: job, onChange: (value) => setFilter("job", value), options: [{ value: "all", label: "All jobs" }, ...data["job-profiles"].map((item) => ({ value: item.job_id, label: item.title }))] },
           { id: "location", label: "Location", value: location, onChange: (value) => setFilter("location", value), options: [{ value: "all", label: "All locations" }, ...data.locations.map((item) => ({ value: item.location_id, label: item.name }))] },
+          ...(preset === "leave-taken" ? [{ id: "leaveType", label: "Leave type", value: leaveType, onChange: (value) => setFilter("leaveType", value), options: [{ value: "all", label: "All leave types" }, ...data["leave-types"].filter((item) => item.status === "active").map((item) => ({ value: item.leave_type_id, label: item.name }))] }] : []),
         ]}
         onClear={() => resetView()}
       >

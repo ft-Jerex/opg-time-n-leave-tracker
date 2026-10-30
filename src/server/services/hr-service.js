@@ -4,6 +4,7 @@ import { hashPassword } from "./auth-service.js";
 import { HttpError } from "../views/problem-view.js";
 import { roleCapabilities } from "../domain/role-capabilities.js";
 import { partialLeaveCharge } from "../../shared/leave.js";
+import { refreshAttendanceSummary } from "./attendance-summary-service.js";
 
 export { roleCapabilities } from "../domain/role-capabilities.js";
 
@@ -382,53 +383,6 @@ const localTimeMinutes = (value, field) => {
   return hours * 60 + minutes;
 };
 
-const refreshDailySummary = async (client, tenantId, employee, localDate) => {
-  const totals = await client.query(
-    `SELECT COALESCE(sum(floor(extract(epoch FROM (s.clock_out_at - s.clock_in_at)) / 60)), 0)::integer AS worked_mins,
-            count(*)::integer AS closed_count
-       FROM attendance_sessions s
-       JOIN tenants t ON t.tenant_id = s.tenant_id
-      WHERE s.tenant_id = $1 AND s.employee_id = $2 AND s.status = 'closed'
-        AND (s.clock_in_at AT TIME ZONE t.timezone)::date = $3::date`,
-    [tenantId, employee.employee_id, localDate],
-  );
-  const existing = await client.query(
-    "SELECT summary_id FROM attendance_summaries WHERE tenant_id=$1 AND employee_id=$2 AND local_date=$3 FOR UPDATE",
-    [tenantId, employee.employee_id, localDate],
-  );
-  if (!existing.rowCount && !Number(totals.rows[0].closed_count)) return null;
-  const workedMins = Number(totals.rows[0].worked_mins);
-  const scheduledMins = Number(employee.standard_daily_mins);
-  const complete = workedMins >= scheduledMins;
-  const values = [
-    workedMins,
-    scheduledMins,
-    Math.max(0, workedMins - scheduledMins),
-    complete ? "complete" : "below_standard",
-    complete ? [] : ["SHORT_DAY"],
-    employee.job_id,
-    tenantId,
-    employee.employee_id,
-    localDate,
-  ];
-  if (existing.rowCount) {
-    const result = await client.query(
-      `UPDATE attendance_summaries
-          SET worked_mins=$1, scheduled_mins=$2, overtime_mins=$3, status=$4, exception_codes=$5, effective_job_id=$6
-        WHERE tenant_id=$7 AND employee_id=$8 AND local_date=$9 RETURNING *`,
-      values,
-    );
-    return result.rows[0];
-  }
-  const result = await client.query(
-    `INSERT INTO attendance_summaries
-      (summary_id,tenant_id,employee_id,local_date,worked_mins,scheduled_mins,overtime_mins,status,exception_codes,effective_job_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [id("summary"), tenantId, employee.employee_id, localDate, ...values.slice(0, 6)],
-  );
-  return result.rows[0];
-};
-
 export const createAttendanceOverride = async (req) => withTransaction(async (client) => {
   const body = req.body || {};
   const employeeId = String(body.employee_id || "").trim();
@@ -491,7 +445,7 @@ export const createAttendanceOverride = async (req) => withTransaction(async (cl
     [id("session"), req.tenantId, employeeId, clockInAt, clockOutAt, status],
   );
   const summary = (clockOutAt || replacedSessionIds.length)
-    ? await refreshDailySummary(client, req.tenantId, employee, localDate)
+    ? await refreshAttendanceSummary(client, req.tenantId, employee.employee_id, localDate)
     : null;
   await audit(
     client,

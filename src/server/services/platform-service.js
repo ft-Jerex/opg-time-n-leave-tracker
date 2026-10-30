@@ -199,7 +199,7 @@ export const provisionTenantDefaults = async (client, { tenantId, organization, 
   );
   await client.query(
     `INSERT INTO job_profiles (job_id,tenant_id,title,department_id,standard_daily_mins,standard_weekly_mins,is_ot_eligible,max_daily_mins,effective_from,effective_to,status)
-     VALUES ($1,$2,'Organization Administrator',$3,480,2400,true,720,CURRENT_DATE,NULL,'active')`,
+     VALUES ($1,$2,'Organization Administrator',$3,480,2400,false,480,CURRENT_DATE,NULL,'active')`,
     [ids.job, tenantId, ids.department],
   );
   await client.query(

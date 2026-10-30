@@ -36,6 +36,7 @@ for (let attempt = 0; attempt < 30; attempt += 1) {
 const env = {
   ...process.env,
   DATABASE_URL: process.env.TEST_DATABASE_URL,
+  MIGRATION_DATABASE_URL: process.env.TEST_DATABASE_URL,
   ALLOW_DEV_SEED: "true",
 };
 for (const script of ["database/migrate.js", "database/seeders/seed.js"]) {

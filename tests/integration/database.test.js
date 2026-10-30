@@ -273,10 +273,24 @@ test(
   assert.equal(overrideClosed.status, 201);
   assert.equal(overrideClosed.body.replaced_session_ids.length, 1);
   assert.equal(overrideClosed.body.summary.local_date, "2027-12-04");
-  assert.equal(overrideClosed.body.summary.worked_mins, 540);
+  assert.equal(overrideClosed.body.summary.worked_mins, 480);
+  assert.equal(overrideClosed.body.summary.overtime_mins, 0);
+  const overrideRawDuration = await pool.query(
+    `SELECT floor(extract(epoch FROM (clock_out_at-clock_in_at))/60)::integer AS minutes
+       FROM attendance_sessions
+      WHERE tenant_id=$1 AND session_id=$2`,
+    ["northstar", overrideClosed.body.session.session_id],
+  );
+  assert.equal(overrideRawDuration.rows[0].minutes, 540);
+  const eligibleOverride = await hr.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-alex", local_date: "2027-12-06", clock_in_time: "07:30", clock_out_time: "16:30", reason: "Integration eligible overtime interval",
+  });
+  assert.equal(eligibleOverride.status, 201);
+  assert.equal(eligibleOverride.body.summary.worked_mins, 540);
+  assert.equal(eligibleOverride.body.summary.overtime_mins, 60);
   const overrideSummaryList = await hr.get("/api/v1/attendance-summaries?limit=1");
   assert.equal(overrideSummaryList.status, 200);
-  assert.equal(overrideSummaryList.body[0].local_date, "2027-12-04");
+  assert.equal(overrideSummaryList.body[0].local_date, "2027-12-06");
   const overrideRows = await pool.query("SELECT status,source FROM attendance_sessions WHERE tenant_id=$1 AND employee_id=$2 AND (clock_in_at AT TIME ZONE 'Asia/Manila')::date=$3 ORDER BY clock_in_at", ["northstar", "ns-morgan", "2027-12-04"]);
   assert.deepEqual(overrideRows.rows, [{ status: "voided", source: "hr_bulk_override" }, { status: "closed", source: "hr_bulk_override" }]);
   const overrideAudit = await pool.query("SELECT action,metadata FROM audit_events WHERE tenant_id=$1 AND target_id=$2", ["northstar", overrideClosed.body.session.session_id]);
@@ -334,6 +348,15 @@ test(
     assert.equal(payrollCsv.status, 200);
     assert.match(payrollCsv.headers["content-type"], /text\/csv/);
     assert.match(payrollCsv.text, /paid_leave_units/);
+    const leaveTaken = await admin.get("/api/v1/reports/leave-taken?from=2026-07-01&to=2026-07-31");
+    assert.equal(leaveTaken.status, 200);
+    assert.equal(leaveTaken.body.preset, "leave-taken");
+    assert.ok(leaveTaken.body.items.some((row) => row.employee_id === "ns-morgan" && row.leave_type_name === "Annual Leave"));
+    assert.ok(leaveTaken.body.items.every((row) => row.start_date <= "2026-07-31" && row.end_date >= "2026-07-01"));
+    const leaveTakenCsv = await admin.get("/api/v1/reports/leave-taken.csv?from=2026-07-01&to=2026-07-31");
+    assert.equal(leaveTakenCsv.status, 200);
+    assert.match(leaveTakenCsv.text, /leave_type_name/);
+    assert.match(leaveTakenCsv.text, /Morgan Santos/);
     const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09").buffer(true).parse(binaryParser);
     assert.equal(payrollXls.status, 200);
     assert.match(payrollXls.headers["content-type"], /application\/vnd\.ms-excel/);
@@ -617,6 +640,15 @@ test(
       });
     assert.equal(provision.status, 201);
     assert.equal(provision.body.tenant_id, tenantId);
+    const provisionedJobLimit = await pool.query(
+      "SELECT standard_daily_mins,max_daily_mins,is_ot_eligible FROM job_profiles WHERE tenant_id=$1 AND title='Organization Administrator'",
+      [tenantId],
+    );
+    assert.deepEqual(provisionedJobLimit.rows[0], {
+      standard_daily_mins: 480,
+      max_daily_mins: 480,
+      is_ot_eligible: false,
+    });
     assert.equal(provision.body.invitation.status, "pending");
     assert.match(provision.body.invite_url, /#\/accept-invitation\?token=/);
     assert.equal(Object.prototype.hasOwnProperty.call(provision.body, "invite_token"), false);
