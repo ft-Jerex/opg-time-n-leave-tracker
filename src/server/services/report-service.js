@@ -1,5 +1,6 @@
 import { pool } from "../config/database.js";
 import { HttpError } from "../views/problem-view.js";
+import { normalizeSearchQuery } from "../../shared/search.js";
 
 const scope = (req) => {
   if (!req.actor?.employee_id) throw new HttpError(403, "Forbidden", "A tenant workspace is required.");
@@ -14,11 +15,17 @@ const page = (req) => ({
 
 export const teamTimesheets = async (req) => {
   const { clause, values } = scope(req);
-  const q = String(req.query.q || "").trim();
+  const q = normalizeSearchQuery(req.query.q);
   const status = String(req.query.status || "").trim();
+  const allowedStatuses = new Set(["", "complete", "below_standard", "absent", "missing_punch"]);
+  if (!allowedStatuses.has(status))
+    throw new HttpError(422, "Invalid Request", "The timesheet status filter is invalid.");
   const params = [req.tenantId, ...values];
   const filters = [`s.tenant_id = $1`, clause];
-  if (q) { params.push(`%${q}%`); filters.push(`(e.name ILIKE $${params.length} OR e.employee_number ILIKE $${params.length} OR s.local_date::text ILIKE $${params.length})`); }
+  if (q) {
+    params.push(q);
+    filters.push(`(position(lower($${params.length}) in lower(e.name)) > 0 OR position(lower($${params.length}) in lower(e.employee_number)) > 0 OR position($${params.length} in s.local_date::text) > 0)`);
+  }
   if (status) { params.push(status); filters.push(`s.status = $${params.length}`); }
   const count = await pool.query(`SELECT count(*)::integer AS total FROM attendance_summaries s JOIN employees e ON e.tenant_id=s.tenant_id AND e.employee_id=s.employee_id WHERE ${filters.join(" AND ")}`, params);
   const { number, size } = page(req); const offset = (number - 1) * size;

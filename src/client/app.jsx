@@ -24,6 +24,7 @@ import { api } from "./lib/api";
 import { employeePresence, weeklyCompletedSeconds } from "./lib/attendance";
 import { auditDisplayRows } from "./lib/audit";
 import { formatLeaveAmount, partialLeaveCharge } from "./lib/leave";
+import { normalizeSearchQuery } from "../shared/search";
 import { Button } from "./components/ui/button";
 import {
   addLocalDays,
@@ -199,6 +200,15 @@ function useDataViewState(viewKey, defaults) {
   }, []);
   const reset = useCallback(() => setState(defaults), [defaults]);
   return [state, update, reset];
+}
+
+function useDebouncedValue(value, delay = 300) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timeout);
+  }, [delay, value]);
+  return debounced;
 }
 
 function Login({ onLogin }) {
@@ -2345,31 +2355,38 @@ function TeamReports({ data, user, tenant }) {
   const [timesheets, setTimesheets] = useState({ items: [], total: 0, page: 1, page_size: 10, page_count: 1 });
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
+  const normalizedQuery = useMemo(() => normalizeSearchQuery(query), [query]);
+  const debouncedQuery = useDebouncedValue(normalizedQuery);
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [timesheetResult, alertResult] = await Promise.all([
-        api.teamTimesheets({ q: query, status: status === "all" ? "" : status, page, page_size: pageSize }),
-        api.teamAlerts(),
-      ]);
+      const timesheetResult = await api.teamTimesheets({ q: debouncedQuery, status: status === "all" ? "" : status, page, page_size: pageSize });
       setTimesheets(timesheetResult);
-      setAlerts(alertResult);
+      setHasLoaded(true);
     } catch (failure) {
       setError(failure.message);
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, query, status]);
+  }, [debouncedQuery, page, pageSize, status]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    api.teamAlerts()
+      .then((items) => { if (!cancelled) setAlerts(items); })
+      .catch((failure) => { if (!cancelled) setError(failure.message); });
+    return () => { cancelled = true; };
+  }, []);
   const exportCsv = async () => {
     setExporting(true);
     setExportMessage("");
     try {
-      const params = new URLSearchParams({ q: query, ...(status === "all" ? {} : { status }) });
+      const params = new URLSearchParams({ q: normalizedQuery, ...(status === "all" ? {} : { status }) });
       const result = await api.downloadCsv(`/team/reports/timesheets.csv?${params}`);
       const link = document.createElement("a");
       link.href = URL.createObjectURL(result.blob);
@@ -2383,8 +2400,8 @@ function TeamReports({ data, user, tenant }) {
       setExporting(false);
     }
   };
-  if (error) return <ErrorState message={error} retry={load} />;
-  if (loading) return <Loading />;
+  if (error && !hasLoaded) return <ErrorState message={error} retry={load} />;
+  if (loading && !hasLoaded) return <Loading />;
   return <div className="space-y-5">
     <Header title="Reports & alerts" detail="Server-calculated timesheets and threshold-based workload signals for your reporting scope." action={tab === "timesheets" ? <div className="flex flex-wrap items-center justify-end gap-3"><Button aria-busy={exporting} disabled={exporting} onClick={exportCsv}>{exporting ? "Exporting…" : "Export filtered CSV"}</Button>{exportMessage ? <span role="status" className="text-sm font-semibold text-green-700">{exportMessage}</span> : null}</div> : null} />
     <div className="flex flex-wrap gap-2">
@@ -2393,10 +2410,12 @@ function TeamReports({ data, user, tenant }) {
     </div>
     {tab === "timesheets" ? <>
       <Card><CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-end">
-        <Field label="Search employee or date" value={query} onChange={(value) => { setQuery(value); setPage(1); }} />
+        <Field label="Search employee or date" type="search" maxLength={100} autoComplete="off" value={query} onChange={(value) => { setQuery(value); setPage(1); }} />
         <label className="text-sm font-semibold">Status<select aria-label="Timesheet status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }} className="mt-1 block h-10 rounded-lg border bg-white px-3"><option value="all">All</option><option value="complete">Complete</option><option value="below_standard">Below standard</option><option value="absent">Absent</option><option value="missing_punch">Missing punch</option></select></label>
+        {loading ? <span className="flex items-center gap-1 pb-2 text-xs text-muted-foreground" role="status"><RefreshCw className="h-3.5 w-3.5 animate-spin" />Updating results</span> : null}
       </CardContent></Card>
-      <Card><CardContent className="overflow-x-auto pt-6"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Employee", "Date", "Worked", "Scheduled", "Overtime", "Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{timesheets.items.map((item) => <tr className="border-b" key={item.summary_id}><td className="p-3 font-semibold">{item.name}</td><td className="p-3">{date(item.local_date)}</td><td className="p-3">{item.worked_mins} min</td><td className="p-3">{item.scheduled_mins} min</td><td className="p-3">{item.overtime_mins} min</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!timesheets.items.length && <Empty title="No matching timesheets" detail="Adjust the search or status filter." />}<Pagination page={timesheets.page} pageCount={timesheets.page_count} pageSize={timesheets.page_size} total={timesheets.total} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></CardContent></Card>
+      {error ? <p className="text-sm text-red-700" role="alert">{error} <Button size="sm" variant="ghost" onClick={load}>Retry</Button></p> : null}
+      <Card><CardContent aria-busy={loading} className={`overflow-x-auto pt-6 transition-opacity ${loading ? "opacity-70" : "opacity-100"}`}><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Employee", "Date", "Worked", "Scheduled", "Overtime", "Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{timesheets.items.map((item) => <tr className="border-b" key={item.summary_id}><td className="p-3 font-semibold">{item.name}</td><td className="p-3">{date(item.local_date)}</td><td className="p-3">{item.worked_mins} min</td><td className="p-3">{item.scheduled_mins} min</td><td className="p-3">{item.overtime_mins} min</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!timesheets.items.length && <Empty title="No matching timesheets" detail="Adjust the search or status filter." />}<Pagination page={timesheets.page} pageCount={timesheets.page_count} pageSize={timesheets.page_size} total={timesheets.total} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></CardContent></Card>
     </> : alerts.length ? <div className="grid gap-3 lg:grid-cols-2">{alerts.map((item) => <Card key={`${item.employee_id}-${item.type}`}><CardContent className="pt-6"><div className="flex items-start justify-between gap-3"><div><h2>{item.name}</h2><p className="text-sm text-muted-foreground">{item.job_title} | {item.type} | {item.is_ot_eligible ? "overtime eligible" : "standard limit applies"}</p></div><Status value={item.severity} /></div><p className="mt-4 font-semibold">{item.worked_mins} of {item.standard_weekly_mins} weekly minutes ({item.percent}%)</p><p className="text-sm text-muted-foreground">Variance: {item.variance_mins} minutes; scheduled in sample: {item.scheduled_mins}.</p>{item.week_start && item.week_end ? <p className="text-xs text-muted-foreground">Week: {date(item.week_start)} - {date(item.week_end)}</p> : null}</CardContent></Card>)}</div> : <Empty title="No workload alerts" detail="Direct reports are currently within their configured thresholds." />}
   </div>;
 }

@@ -334,6 +334,21 @@ test(
       .set("x-csrf-token", adminLogin.body.csrf_token)
       .send({ tenant_id: "northstar" });
     assert.equal(context.status, 200);
+    const literalWildcardSearch = await admin
+      .get("/api/v1/team/timesheets")
+      .query({ q: "%", page_size: 100 });
+    assert.equal(literalWildcardSearch.status, 200);
+    assert.equal(literalWildcardSearch.body.total, 0);
+    const normalizedTeamSearch = await admin
+      .get("/api/v1/team/timesheets")
+      .query({ q: "  Morgan\nSantos  ", page_size: 100 });
+    assert.equal(normalizedTeamSearch.status, 200);
+    assert.ok(normalizedTeamSearch.body.items.length > 0);
+    assert.ok(normalizedTeamSearch.body.items.every((row) => row.name === "Morgan Santos"));
+    const invalidTeamStatus = await admin
+      .get("/api/v1/team/timesheets")
+      .query({ status: "complete' OR 1=1 --" });
+    assert.equal(invalidTeamStatus.status, 422);
     const alex = await admin.get("/api/v1/employees/ns-alex");
     const invalidHierarchy = await admin
       .put("/api/v1/employees/ns-alex")
