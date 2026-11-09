@@ -31,19 +31,19 @@ const rowsForSheet = (rows, dates, decimal) => rows.map((row) => {
     return decimal ? decimalHours(minutes) : hoursText(minutes);
   });
   const totalMinutes = dates.reduce((total, date) => total + rowMinutes(row, date), 0);
-  return [row.employee_number, row.name, row.email || "", "-", row.job_title, row.job_title, ...daily, decimal ? decimalHours(totalMinutes) : hoursText(totalMinutes)];
+  return [row.name, row.email || "", row.tenant_id, row.job_title, row.job_title, ...daily, decimal ? decimalHours(totalMinutes) : hoursText(totalMinutes)];
 });
 
 export const buildMonthlyTimesheetWorkbook = ({ rows, dates }) => {
-  const headers = ["Employee Id", "Employee Name", "Email ID", "Client Name", "Project Name", "Job Name", ...dates.map(displayDate), "Total"];
-  const totalRow = ["Total", "", "", "", "", "", ...dates.map((date) => {
+  const headers = ["Employee Name", "Email ID", "Company Name", "Role", "Job Name", ...dates.map(displayDate), "Total"];
+  const totalRow = ["Total", "", "", "", "", ...dates.map((date) => {
     const minutes = rows.reduce((total, row) => total + rowMinutes(row, date), 0);
     return minutes;
   }), 0];
   const grandTotal = dates.reduce((total, date) => total + rows.reduce((sum, row) => sum + rowMinutes(row, date), 0), 0);
   totalRow[totalRow.length - 1] = grandTotal;
-  const hoursTotal = totalRow.map((value, index) => index < 6 ? value : hoursText(value));
-  const decimalTotal = totalRow.map((value, index) => index < 6 ? value : decimalHours(value));
+  const hoursTotal = totalRow.map((value, index) => index < 5 ? value : hoursText(value));
+  const decimalTotal = totalRow.map((value, index) => index < 5 ? value : decimalHours(value));
   const hours = [headers, ...rowsForSheet(rows, dates, false), hoursTotal];
   const decimal = [headers, ...rowsForSheet(rows, dates, true), decimalTotal];
   const workbook = XLSX.utils.book_new();

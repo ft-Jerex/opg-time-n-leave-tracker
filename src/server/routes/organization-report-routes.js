@@ -7,9 +7,9 @@ const cell = safeCsvCell;
 const columns = (preset) => preset === "payroll-timesheet"
   ? ["employee_id","employee_number","employee_name","department","job","manager","location","period_start","period_end","worked_mins","overtime_mins","approved_overtime_mins","paid_leave_units","unpaid_leave_units","total_leave_units","leave_units","attendance_statuses"]
   : preset === "leave-taken"
-    ? ["request_id","employee_id","employee_number","employee_name","department","job","manager","leave_type_name","payment_type","start_date","end_date","duration","partial_minutes","chargeable_amount","unit","reason","approved_by","submitted_at","decided_at"]
+    ? ["employee_name","department","role","manager","leave_type_name","payment_type","start_date","end_date","duration","partial_minutes","chargeable_amount","unit","reason","approved_by","submitted_at","decided_at"]
     : null;
-const rowValue = (row, key, result) => key === "employee_name" ? row.name : key === "department" ? row.department_name : key === "job" ? row.job_title : key === "manager" ? row.manager_name : key === "location" ? row.location_name : key === "period_start" ? result.from : key === "period_end" ? result.to : row[key];
+const rowValue = (row, key, result) => key === "employee_name" ? row.name : key === "department" ? row.department_name : ["job", "role"].includes(key) ? row.job_title : key === "manager" ? row.manager_name : key === "location" ? row.location_name : key === "period_start" ? result.from : key === "period_end" ? result.to : row[key];
 
 export const organizationReportRoutes = (app, requireCapability) => {
   const router = express.Router();

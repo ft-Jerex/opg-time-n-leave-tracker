@@ -151,7 +151,9 @@ try {
     await hr.page.getByLabel("Attendance override employee").selectOption("ns-morgan");
     await hr.page.getByRole("textbox", { name: "Date", exact: true }).fill(testDates.attendance);
     await hr.page.getByLabel("Clock in").fill("07:30");
-    await hr.page.getByLabel("Clock out (optional)").fill("16:30");
+    const clockOut = hr.page.getByLabel("Clock out");
+    assert.equal(await clockOut.getAttribute("required"), "");
+    await clockOut.fill("16:30");
     await hr.page.getByLabel("Required reason").last().fill(`Browser HR attendance ${Date.now()}`);
     hr.page.once("dialog", (dialog) => dialog.accept());
     await hr.page.getByRole("button", { name: "Apply attendance override", exact: true }).click();

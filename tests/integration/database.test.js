@@ -370,7 +370,7 @@ test(
     assert.ok(leaveTaken.body.items.every((row) => row.start_date <= "2026-07-31" && row.end_date >= "2026-07-01"));
     const leaveTakenCsv = await admin.get("/api/v1/reports/leave-taken.csv?from=2026-07-01&to=2026-07-31");
     assert.equal(leaveTakenCsv.status, 200);
-    assert.match(leaveTakenCsv.text, /leave_type_name/);
+    assert.equal(leaveTakenCsv.text.split("\n")[0], "employee_name,department,role,manager,leave_type_name,payment_type,start_date,end_date,duration,partial_minutes,chargeable_amount,unit,reason,approved_by,submitted_at,decided_at");
     assert.match(leaveTakenCsv.text, /Morgan Santos/);
     const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09").buffer(true).parse(binaryParser);
     assert.equal(payrollXls.status, 200);
@@ -379,7 +379,9 @@ test(
     assert.deepEqual(Array.from(payrollXls.body.subarray(0, 4)), [0xd0, 0xcf, 0x11, 0xe0]);
     const payrollWorkbook = XLSX.read(payrollXls.body, { type: "buffer" });
     assert.deepEqual(payrollWorkbook.SheetNames, ["Monthly Time Logs_Hours_1", "Monthly Time Logs_Decimal_2"]);
-    assert.equal(payrollWorkbook.Sheets["Monthly Time Logs_Hours_1"].G1.v, "01-Sep-2026");
+    const payrollHours = XLSX.utils.sheet_to_json(payrollWorkbook.Sheets["Monthly Time Logs_Hours_1"], { header: 1 });
+    assert.deepEqual(payrollHours[0].slice(0, 6), ["Employee Name", "Email ID", "Company Name", "Role", "Job Name", "01-Sep-2026"]);
+    assert.equal(payrollHours[1][2], "northstar");
     const invalidPayrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-13");
     assert.equal(invalidPayrollXls.status, 422);
     const auditCsv = await admin.get("/api/v1/audit-events/export.csv?q=seed");

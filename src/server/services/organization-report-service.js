@@ -44,7 +44,7 @@ export const generateMonthlyTimesheet = async (req) => {
     `WITH days AS (
        SELECT generate_series($2::date, $3::date, interval '1 day')::date AS local_date
      ), employees_scope AS (
-       SELECT e.employee_id,e.employee_number,e.name,e.job_id,j.title AS job_title,COALESCE(u.email,'') AS email
+       SELECT e.tenant_id,e.employee_id,e.employee_number,e.name,e.job_id,j.title AS job_title,COALESCE(u.email,'') AS email
        FROM employees e
        JOIN job_profiles j ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
        LEFT JOIN LATERAL (
@@ -60,11 +60,11 @@ export const generateMonthlyTimesheet = async (req) => {
        WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date
        GROUP BY employee_id,local_date
      )
-     SELECT s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email,
+     SELECT s.tenant_id,s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email,
             jsonb_object_agg(to_char(d.local_date,'YYYY-MM-DD'),COALESCE(a.worked_mins,0) ORDER BY d.local_date) AS daily
      FROM employees_scope s CROSS JOIN days d
      LEFT JOIN attendance a ON a.employee_id=s.employee_id AND a.local_date=d.local_date
-     GROUP BY s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email
+     GROUP BY s.tenant_id,s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email
      ORDER BY s.name ASC,s.employee_id ASC`,
     params,
   );

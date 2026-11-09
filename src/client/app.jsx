@@ -3442,7 +3442,7 @@ function Overrides({ data, refresh, notify, user, tenant }) {
             <label className="text-sm font-semibold">Employee<select aria-label="Attendance override employee" required value={timeForm.employee_id || employees[0]?.employee_id || ""} onChange={(e) => setTimeForm({ ...timeForm, employee_id: e.target.value })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3">{employees.map((item) => <option key={item.employee_id} value={item.employee_id}>{item.name}</option>)}</select></label>
             <Field label="Date" type="date" required value={timeForm.local_date} onChange={(value) => setTimeForm({ ...timeForm, local_date: value })} />
             <Field label="Clock in" type="time" required value={timeForm.clock_in_time} onChange={(value) => setTimeForm({ ...timeForm, clock_in_time: value })} />
-            <Field label="Clock out (optional)" type="time" value={timeForm.clock_out_time} onChange={(value) => setTimeForm({ ...timeForm, clock_out_time: value })} />
+            <Field label="Clock out" type="time" required value={timeForm.clock_out_time} onChange={(value) => setTimeForm({ ...timeForm, clock_out_time: value })} />
             <div className="lg:col-span-2"><Field label="Required reason" required value={timeForm.reason} onChange={(value) => setTimeForm({ ...timeForm, reason: value })} /></div>
             <Button className="lg:col-span-2">Apply attendance override</Button>
           </form>
