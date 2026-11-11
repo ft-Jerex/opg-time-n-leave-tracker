@@ -400,6 +400,12 @@ export const deleteResource = (resource) => async (req) =>
     );
     if (employeeResources.has(resource))
       await assertEmployeeScope(client, req, current.employee_id);
+    if (resource === "leave-requests" && current.status !== "draft")
+      throw new HttpError(
+        422,
+        "Invalid Leave Request",
+        "Only draft leave requests can be deleted.",
+      );
     const versioned = Object.prototype.hasOwnProperty.call(
       schema.$defs[entityName].properties,
       "version",

@@ -1438,8 +1438,9 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
       return;
     }
     setBusy(true);
+    let createdRow = null;
     try {
-      const row = await api.create("leave-requests", {
+      createdRow = await api.create("leave-requests", {
         employee_id: employee.employee_id,
         leave_type_id: form.leave_type_id,
         start_date: form.start_date,
@@ -1459,14 +1460,27 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
         version: 0,
       });
       await api.transition(
-        `/leave-requests/${row.request_id}/submit`,
+        `/leave-requests/${createdRow.request_id}/submit`,
         {},
-        row.version,
+        createdRow.version,
       );
       notify("Leave request submitted.");
       setModal(false);
       await refresh();
     } catch (e) {
+      if (createdRow) {
+        try {
+          await api.remove(
+            "leave-requests",
+            createdRow.request_id,
+            createdRow.version,
+          );
+        } catch (cleanupError) {
+          // A version conflict means the request likely reached pending state,
+          // so it must be preserved even if the response was interrupted.
+          if (cleanupError.status !== 409) console.error(cleanupError);
+        }
+      }
       setFormErrors({ form: e.message });
       notify(e.message, "error");
     } finally {
@@ -1507,6 +1521,35 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
       "Cancel this approved leave request? The charged leave will be returned to your balance.",
       "Approved leave cancelled and balance restored.",
     );
+  const submitDraft = async (item) => {
+    setBusyRequestId(item.request_id);
+    try {
+      await api.transition(
+        `/leave-requests/${item.request_id}/submit`,
+        {},
+        item.version,
+      );
+      notify("Draft leave request submitted.");
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusyRequestId("");
+    }
+  };
+  const discardDraft = async (item) => {
+    if (!window.confirm("Discard this draft leave request?")) return;
+    setBusyRequestId(item.request_id);
+    try {
+      await api.remove("leave-requests", item.request_id, item.version);
+      notify("Draft leave request discarded.");
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusyRequestId("");
+    }
+  };
   const [view, setView] = useState("calendar");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1519,6 +1562,9 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
     .sort((left, right) => right.start_date.localeCompare(left.start_date));
   const leavePageCount = Math.max(1, Math.ceil(leaveRows.length / pageSize));
   const visibleLeaveRows = leaveRows.slice((page - 1) * pageSize, page * pageSize);
+  const calendarLeaveRows = leaveRows.filter((item) =>
+    ["pending", "approved"].includes(item.status),
+  );
   const leaveCalendarDate = monthDateForTimeZone(tenant?.timezone, monthOffset);
   const leaveCalendarKey = `${leaveCalendarDate.getFullYear()}-${String(leaveCalendarDate.getMonth() + 1).padStart(2, "0")}`;
   const { daysInMonth: leaveDays, leadingDays: leaveLeadingDays } = monthGrid(
@@ -1540,8 +1586,8 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
       />
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><Field label="Search leave" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><label className="text-sm font-semibold">Status<select aria-label="Leave status filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option>{["pending","approved","rejected","withdrawn","cancelled"].map((value) => <option key={value} value={value}>{human(value)}</option>)}</select></label><div className="flex gap-2"><Button variant={view === "calendar" ? "secondary" : "outline"} onClick={() => setView("calendar")}>Month</Button><Button variant={view === "table" ? "secondary" : "outline"} onClick={() => setView("table")}>List</Button><Button variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setPage(1); }}>Clear filters</Button></div></div>
-          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = leaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : "Available"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{formatLeaveAmount(item.chargeable_amount)}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end"><Field label="Search leave" value={query} onChange={(value) => { setQuery(value); setPage(1); }} /><label className="text-sm font-semibold">Status<select aria-label="Leave status filter" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="mt-2 h-11 rounded-lg border bg-white px-3"><option value="all">All statuses</option>{["draft","pending","approved","rejected","withdrawn","cancelled"].map((value) => <option key={value} value={value}>{human(value)}</option>)}</select></label><div className="flex gap-2"><Button variant={view === "calendar" ? "secondary" : "outline"} onClick={() => setView("calendar")}>Month</Button><Button variant={view === "table" ? "secondary" : "outline"} onClick={() => setView("table")}>List</Button><Button variant="ghost" onClick={() => { setQuery(""); setStatusFilter("all"); setPage(1); }}>Clear filters</Button></div></div>
+          {view === "calendar" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{leaveCalendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><p className="text-xs text-muted-foreground">Only pending or approved leave on chargeable weekdays is shown.</p><div className="grid grid-cols-7 gap-1" aria-label="Leave calendar">{leaveCalendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leaveLeadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: leaveDays }, (_, index) => { const localDate = `${leaveCalendarKey}-${String(index + 1).padStart(2, "0")}`; const chargeable = chargeableDays(localDate, localDate, data.holidays) > 0; const matches = chargeable ? calendarLeaveRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate) : []; return <div key={localDate} className={`min-h-16 rounded-md border p-2 text-xs ${matches.some((item) => item.status === "approved") ? "bg-emerald-50 text-emerald-800" : matches.length ? "bg-amber-50 text-amber-800" : "bg-white"}`}><b>{index + 1}</b><span className="mt-1 block">{matches.length ? `${matches.length} request(s)` : chargeable ? "Available" : "Non-working day"}</span></div>; })}</div></div> : <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead><tr className="border-b">{["Leave type","Dates","Charge","Reason","Status"].map((label) => <th className="p-3" key={label}>{label}</th>)}</tr></thead><tbody>{visibleLeaveRows.map((item) => <tr className="border-b" key={item.request_id}><td className="p-3">{typeName(item.leave_type_id)}</td><td className="p-3">{date(item.start_date)} – {date(item.end_date)}</td><td className="p-3">{formatLeaveAmount(item.chargeable_amount)}</td><td className="max-w-xs truncate p-3">{item.reason}</td><td className="p-3"><Status value={item.status} /></td></tr>)}</tbody></table>{!visibleLeaveRows.length && <Empty title="No leave matches" detail="Clear the search or status filter." />}<Pagination page={page} pageCount={leavePageCount} pageSize={pageSize} total={leaveRows.length} onPage={setPage} onPageSize={(value) => { setPageSize(value); setPage(1); }} /></div>}
         </CardContent>
       </Card>
       {leaveOptions.length ? (
@@ -1623,6 +1669,25 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                   </span>
                   <div className="flex items-center gap-2">
                     <Status value={item.status} />
+                    {canWrite && item.status === "draft" && (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={Boolean(busyRequestId)}
+                          onClick={() => submitDraft(item)}
+                        >
+                          {busyRequestId === item.request_id ? "Submitting…" : "Submit draft"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={Boolean(busyRequestId)}
+                          onClick={() => discardDraft(item)}
+                        >
+                          Discard
+                        </Button>
+                      </>
+                    )}
                     {canWrite && item.status === "pending" && (
                       <Button
                         variant="outline"

@@ -188,6 +188,11 @@ export const api = {
       headers: version === undefined ? {} : { "if-match": String(version) },
       body,
     }),
+  remove: <K extends keyof EntityMap>(resource: K, id: string, version?: number) =>
+    request<null>(`/${resource}/${id}`, {
+      method: "DELETE",
+      headers: version === undefined ? {} : { "if-match": String(version) },
+    }),
   transition: <T>(
     path: string,
     body: Record<string, unknown> = {},
