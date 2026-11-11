@@ -3827,7 +3827,7 @@ function Policies({ data, refresh, notify }) {
           accrual_rule: accrualRule,
           counting_rule: { weekends: false, holidays: false },
           request_window: { min_days: 1, max_days: 365 },
-          documentation_rule: { required_after_days: 5 },
+          documentation_rule: {},
           effective_to: null,
           status: "active",
         });

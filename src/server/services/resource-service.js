@@ -545,15 +545,6 @@ export const transition = async (
           "Invalid Leave Period",
           "The selected period has no chargeable working time.",
         );
-      const documentationAfter = Number(
-        policy.rows[0].documentation_rule?.required_after_days ?? Infinity,
-      );
-      if (amount > documentationAfter && !current.attachment_ids.length)
-        throw new HttpError(
-          422,
-          "Documentation Required",
-          "This request requires a validated attachment.",
-        );
       current.chargeable_amount = amount;
       let requestBalance = await client.query(
         `SELECT *

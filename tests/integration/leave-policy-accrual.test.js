@@ -132,7 +132,7 @@ test(
           '{"type":"monthly","reset_frequency":"monthly"}',3,false,true,
           '{"weekends":false,"holidays":false}',
           '{"min_days":0,"max_days":365}',
-          '{"required_after_days":5}','2026-01-01',NULL,'active'
+          '{}','2026-01-01',NULL,'active'
         );
         INSERT INTO leave_balances (
           balance_id,tenant_id,employee_id,leave_type_id,period,accrued,
