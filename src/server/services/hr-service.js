@@ -10,7 +10,6 @@ export { roleCapabilities } from "../domain/role-capabilities.js";
 
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const now = () => new Date().toISOString();
-const generatedEmployeeNumber = (tenantId, employeeId) => `${tenantId.toUpperCase()}-${employeeId.slice(-8).toUpperCase()}`;
 const invitationToken = () => crypto.randomBytes(32).toString("base64url");
 const invitationHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const invitationUrl = (req, token) => {
@@ -215,7 +214,7 @@ const createPortalAccount = async (client, tenantId, employee, account) => {
 export const createDirectoryEntry = async (req) => withTransaction(async (client) => {
   const body = req.body || {};
   const employeeId = body.employee_id || id("employee");
-  const employee = employeePayload({ ...body, employee_number: body.employee_number || generatedEmployeeNumber(req.tenantId, employeeId) }, req.tenantId, employeeId);
+  const employee = employeePayload(body, req.tenantId, employeeId);
   validateEmployee(employee);
   await assertManager(client, req.tenantId, employee.employee_id, employee.manager_id);
   const duplicateNumber = await client.query("SELECT 1 FROM employees WHERE tenant_id=$1 AND employee_number=$2 LIMIT 1", [req.tenantId, employee.employee_number]);

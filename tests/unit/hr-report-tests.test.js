@@ -23,7 +23,7 @@ test("only approved leave contributes to paid and unpaid totals", () => {
   ]), { paid: 2, unpaid: 1.5 });
 });
 
-test("monthly time log workbook matches the legacy two-sheet layout", () => {
+test("monthly time log workbook starts both sheets with the stored employee number", () => {
   const dates = monthDates("2026-09");
   assert.equal(dates.length, 30);
   assert.equal(monthDates("2024-02").length, 29);
@@ -34,6 +34,7 @@ test("monthly time log workbook matches the legacy two-sheet layout", () => {
     dates,
     rows: [{
       tenant_id: "northstar",
+      employee_number: "00042",
       name: "Jamal Al Badi",
       email: "jam@example.com",
       job_title: "Recruitment Automation Intern",
@@ -46,20 +47,23 @@ test("monthly time log workbook matches the legacy two-sheet layout", () => {
   assert.deepEqual(parsed.SheetNames, ["Monthly Time Logs_Hours_1", "Monthly Time Logs_Decimal_2"]);
   const hours = parsed.Sheets[parsed.SheetNames[0]];
   const decimal = parsed.Sheets[parsed.SheetNames[1]];
-  assert.equal(hours.A1.v, "Employee Name");
-  assert.equal(hours.F1.v, "01-Sep-2026");
-  assert.equal(hours.A2.v, "Jamal Al Badi");
-  assert.equal(hours.B2.v, "jam@example.com");
-  assert.equal(hours.C2.v, "northstar");
-  assert.equal(hours.D2.v, "Recruitment Automation Intern");
+  assert.equal(hours.A1.v, "Employee Number");
+  assert.equal(hours.B1.v, "Employee Name");
+  assert.equal(hours.G1.v, "01-Sep-2026");
+  assert.equal(hours.A2.v, "00042");
+  assert.equal(hours.B2.v, "Jamal Al Badi");
+  assert.equal(hours.C2.v, "jam@example.com");
+  assert.equal(hours.D2.v, "northstar");
   assert.equal(hours.E2.v, "Recruitment Automation Intern");
-  assert.equal(hours.F2.v, "08:00");
-  assert.equal(hours.AI2.v, "25:00");
-  assert.equal(hours.AJ2.v, "33:00");
-  assert.equal(hours.A3.v, "Total");
-  assert.equal(hours.AJ3.v, "33:00");
-  assert.equal(decimal.F2.v, 8);
-  assert.equal(decimal.AI2.v, 25);
-  assert.equal(decimal.AJ2.v, 33);
-  assert.equal(decimal.AJ3.v, 33);
+  assert.equal(hours.F2.v, "Recruitment Automation Intern");
+  assert.equal(hours.G2.v, "08:00");
+  assert.equal(hours.AJ2.v, "25:00");
+  assert.equal(hours.AK2.v, "33:00");
+  assert.equal(hours.B3.v, "Total");
+  assert.equal(hours.AK3.v, "33:00");
+  assert.equal(decimal.G2.v, 8);
+  assert.equal(decimal.A2.v, "00042");
+  assert.equal(decimal.AJ2.v, 25);
+  assert.equal(decimal.AK2.v, 33);
+  assert.equal(decimal.AK3.v, 33);
 });

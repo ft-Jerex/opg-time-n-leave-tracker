@@ -4,8 +4,8 @@ import * as service from "../services/report-service.js";
 
 const csvCell = (value) => { const text = String(value ?? ""); const safe = /^[=+\-@]/.test(text) ? `'${text}` : text; return /[",\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe; };
 const csv = (result) => [
-  ["employee", "employee_number", "date", "worked_mins", "scheduled_mins", "overtime_mins", "status"],
-  ...result.items.map((row) => [row.name, row.employee_number, row.local_date, row.worked_mins, row.scheduled_mins, row.overtime_mins, row.status]),
+  ["employee_number", "employee", "date", "worked_mins", "scheduled_mins", "overtime_mins", "status"],
+  ...result.items.map((row) => [row.employee_number, row.name, row.local_date, row.worked_mins, row.scheduled_mins, row.overtime_mins, row.status]),
 ].map((row) => row.map(csvCell).join(",")).join("\n");
 
 export const reportRoutes = (app, requireCapability) => {

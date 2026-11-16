@@ -143,7 +143,8 @@ const overtime = async (req, info) => {
        WHERE tenant_id=$1 AND local_date BETWEEN $2::date AND $3::date
        GROUP BY employee_id
      )
-     SELECT e.department_id,d.name AS department_name,
+     SELECT string_agg(DISTINCT e.employee_number, ', ' ORDER BY e.employee_number) AS employee_number,
+            e.department_id,d.name AS department_name,
             COALESCE(sum(CASE WHEN j.is_ot_eligible THEN s.overtime_mins ELSE 0 END),0)::integer AS overtime_mins,
             COALESCE(sum(CASE WHEN NOT j.is_ot_eligible THEN GREATEST(s.worked_mins-j.standard_daily_mins,0) ELSE 0 END),0)::integer AS limit_exception_mins,
             COALESCE(sum(o.approved_overtime_mins),0)::integer AS approved_overtime_mins,

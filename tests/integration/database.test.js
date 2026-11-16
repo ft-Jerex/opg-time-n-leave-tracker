@@ -371,6 +371,10 @@ test(
     assert.equal(normalizedTeamSearch.status, 200);
     assert.ok(normalizedTeamSearch.body.items.length > 0);
     assert.ok(normalizedTeamSearch.body.items.every((row) => row.name === "Morgan Santos"));
+    const teamCsv = await admin.get("/api/v1/team/reports/timesheets.csv?q=Morgan");
+    assert.equal(teamCsv.status, 200);
+    assert.match(teamCsv.text, /^employee_number,employee,date,/);
+    assert.match(teamCsv.text, /NS-0002,Morgan Santos,/);
     const invalidTeamStatus = await admin
       .get("/api/v1/team/timesheets")
       .query({ status: "complete' OR 1=1 --" });
@@ -388,7 +392,15 @@ test(
     const payrollCsv = await admin.get("/api/v1/reports/payroll-timesheet.csv?from=2026-09-01&to=2026-09-30");
     assert.equal(payrollCsv.status, 200);
     assert.match(payrollCsv.headers["content-type"], /text\/csv/);
+    assert.match(payrollCsv.text, /^employee_number,employee_id,employee_name,/);
+    assert.match(payrollCsv.text, /NS-0001/);
     assert.match(payrollCsv.text, /paid_leave_units/);
+    for (const preset of ["organization-absenteeism", "overtime-by-department", "leave-balance-liability"]) {
+      const exportResult = await admin.get(`/api/v1/reports/${preset}.csv?from=2026-09-01&to=2026-09-30`);
+      assert.equal(exportResult.status, 200);
+      assert.match(exportResult.text, /^employee_number,/);
+      if (preset === "overtime-by-department") assert.match(exportResult.text, /NS-0001/);
+    }
     const leaveTaken = await admin.get("/api/v1/reports/leave-taken?from=2026-07-01&to=2026-07-31");
     assert.equal(leaveTaken.status, 200);
     assert.equal(leaveTaken.body.preset, "leave-taken");
@@ -396,8 +408,9 @@ test(
     assert.ok(leaveTaken.body.items.every((row) => row.start_date <= "2026-07-31" && row.end_date >= "2026-07-01"));
     const leaveTakenCsv = await admin.get("/api/v1/reports/leave-taken.csv?from=2026-07-01&to=2026-07-31");
     assert.equal(leaveTakenCsv.status, 200);
-    assert.equal(leaveTakenCsv.text.split("\n")[0], "employee_name,department,role,manager,leave_type_name,payment_type,start_date,end_date,duration,partial_minutes,chargeable_amount,unit,reason,approved_by,submitted_at,decided_at");
+    assert.equal(leaveTakenCsv.text.split("\n")[0], "employee_number,employee_name,department,role,manager,leave_type_name,payment_type,start_date,end_date,duration,partial_minutes,chargeable_amount,unit,reason,approved_by,submitted_at,decided_at");
     assert.match(leaveTakenCsv.text, /Morgan Santos/);
+    assert.match(leaveTakenCsv.text, /NS-0002,Morgan Santos/);
     const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09").buffer(true).parse(binaryParser);
     assert.equal(payrollXls.status, 200);
     assert.match(payrollXls.headers["content-type"], /application\/vnd\.ms-excel/);
@@ -406,18 +419,21 @@ test(
     const payrollWorkbook = XLSX.read(payrollXls.body, { type: "buffer" });
     assert.deepEqual(payrollWorkbook.SheetNames, ["Monthly Time Logs_Hours_1", "Monthly Time Logs_Decimal_2"]);
     const payrollHours = XLSX.utils.sheet_to_json(payrollWorkbook.Sheets["Monthly Time Logs_Hours_1"], { header: 1 });
-    assert.deepEqual(payrollHours[0].slice(0, 6), ["Employee Name", "Email ID", "Company Name", "Role", "Job Name", "01-Sep-2026"]);
-    assert.equal(payrollHours[1][2], "northstar");
+    assert.deepEqual(payrollHours[0].slice(0, 7), ["Employee Number", "Employee Name", "Email ID", "Company Name", "Role", "Job Name", "01-Sep-2026"]);
+    assert.equal(payrollHours[1][0], "NS-0001");
+    assert.equal(payrollHours[1][3], "northstar");
     const invalidPayrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-13");
     assert.equal(invalidPayrollXls.status, 422);
     const auditCsv = await admin.get("/api/v1/audit-events/export.csv?q=seed");
     assert.equal(auditCsv.status, 200);
     assert.match(auditCsv.text, /event_id/);
     assert.match(auditCsv.text, /target_name/);
+    const manualNumber = `NS-MANUAL-${Date.now()}`;
     const directory = await admin
       .post("/api/v1/hr/directory")
       .set("x-csrf-token", context.body.csrf_token)
       .send({
+        employee_number: manualNumber,
         name: "Integration Directory User",
         job_id: "ns-coordinator",
         manager_id: "ns-alex",
@@ -430,8 +446,20 @@ test(
         account: { enabled: true, email: `directory-${Date.now()}@dev.local`, password: "Temporary-Password-2026!", roles: ["Employee"] },
       });
     assert.equal(directory.status, 201);
-    assert.match(directory.body.employee.employee_number, /^NORTHSTAR-[A-F0-9]{8}$/);
+    assert.equal(directory.body.employee.employee_number, manualNumber);
     assert.equal(Object.prototype.hasOwnProperty.call(directory.body, "password"), false);
+    const editedNumber = `${manualNumber}-EDITED`;
+    const editedDirectory = await admin
+      .put(`/api/v1/hr/directory/${directory.body.employee.employee_id}`)
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ employee_number: editedNumber });
+    assert.equal(editedDirectory.status, 200);
+    assert.equal(editedDirectory.body.employee.employee_number, editedNumber);
+    const missingNumber = await admin
+      .post("/api/v1/hr/directory")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ ...directory.body.employee, employee_id: undefined, employee_number: " " });
+    assert.equal(missingNumber.status, 422);
 
     const unprovisionedEmail = `existing-directory-${Date.now()}@dev.local`;
     const unprovisioned = await admin
@@ -513,6 +541,7 @@ test(
       .post("/api/v1/hr/directory")
       .set("x-csrf-token", context.body.csrf_token)
       .send({
+        employee_number: `NS-INVITED-${Date.now()}`,
         name: "Invited Directory User",
         job_id: "ns-coordinator",
         manager_id: "ns-alex",
