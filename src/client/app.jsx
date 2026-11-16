@@ -4303,7 +4303,6 @@ function Field({ label, onChange, error, helperText, id, className, required = f
   const generatedId = useId();
   const inputId = id || `field-${generatedId.replace(/:/g, "")}`;
   if (label === "Organization ID" && window.location.hash.startsWith("#/register")) return null;
-  if (label === "Employee number") return null;
   const invitePassword = label === "Temporary password";
   const contextualHelperText = helperText || (invitePassword ? "Optional: leave blank to generate a unique one-time invitation link to copy and paste." : label === "Organization name" && window.location.hash.startsWith("#/register") ? "Your workspace identifier is generated automatically." : "");
   const helperId = contextualHelperText ? `${inputId}-help` : "";
@@ -4321,6 +4320,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
     Currency: "currency",
     "Support email": "support_email",
     "Full name": "full_name",
+    "Employee number": "employee_number",
     Email: "email",
   }[label];
   const describedBy = [externalDescribedBy, helperId, errorId].filter(Boolean).join(" ") || undefined;
