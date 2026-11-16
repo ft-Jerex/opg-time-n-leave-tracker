@@ -184,6 +184,32 @@ test(
       Number(balanceAfterCancellation.rows[0].remaining),
       Number(balanceBeforeCancellation.rows[0].remaining),
     );
+    const expiredLeaveId = `leave-expired-${Date.now()}`;
+    await pool.query(
+      `INSERT INTO leave_requests
+        (request_id,tenant_id,employee_id,leave_type_id,start_date,end_date,
+         partial_day,chargeable_amount,reason,attachment_ids,status,version)
+       SELECT $1,'northstar','ns-morgan','ns-annual',
+              local_today - 1,local_today - 1,'none',1,
+              'Expired cancellation integration check',ARRAY[]::text[],'approved',0
+         FROM (
+           SELECT (CURRENT_TIMESTAMP AT TIME ZONE timezone)::date AS local_today
+             FROM tenants WHERE tenant_id='northstar'
+         ) tenant_clock`,
+      [expiredLeaveId],
+    );
+    const expiredCancellation = await user
+      .post(`/api/v1/leave-requests/${expiredLeaveId}/cancel`)
+      .set("x-csrf-token", userCsrf)
+      .set("if-match", "0")
+      .send({});
+    assert.equal(expiredCancellation.status, 409);
+    assert.equal(expiredCancellation.body.title, "Leave Period Ended");
+    const unchangedExpiredLeave = await pool.query(
+      "SELECT status FROM leave_requests WHERE tenant_id=$1 AND request_id=$2",
+      ["northstar", expiredLeaveId],
+    );
+    assert.equal(unchangedExpiredLeave.rows[0].status, "approved");
   const adjustment = await user.post("/api/v1/attendance-adjustments").set("x-csrf-token", userCsrf).send({
     employee_id: "ns-morgan", local_date: "2027-12-01", original: { clock_in: "09:00", clock_out: null }, proposed: { clock_in: "09:00", clock_out: "17:00" },
     reason: "Integration punch correction", attachment_ids: [], status: "draft", submitted_at: new Date().toISOString(), decided_by: null, decided_at: null, decision_note: null, version: 0,

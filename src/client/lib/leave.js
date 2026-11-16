@@ -5,6 +5,7 @@ const leaveAmountFormatter = new Intl.NumberFormat("en-US", {
 
 export {
   DAY_LEAVE_CREDITS_PER_HOUR,
+  hasLeavePeriodEnded,
   partialLeaveCharge,
 } from "../../shared/leave.js";
 

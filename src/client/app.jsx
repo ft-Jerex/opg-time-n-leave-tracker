@@ -23,7 +23,11 @@ import {
 import { api } from "./lib/api";
 import { employeePresence, weeklyCompletedSeconds } from "./lib/attendance";
 import { auditDisplayRows } from "./lib/audit";
-import { formatLeaveAmount, partialLeaveCharge } from "./lib/leave";
+import {
+  formatLeaveAmount,
+  hasLeavePeriodEnded,
+  partialLeaveCharge,
+} from "./lib/leave";
 import { normalizeSearchQuery } from "../shared/search";
 import { Button } from "./components/ui/button";
 import {
@@ -1356,6 +1360,7 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   );
   const [modal, setModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [formErrors, setFormErrors] = useState({});
   const formRef = useRef(null);
   const types = leaveOptions;
@@ -1427,6 +1432,10 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
     if (selectedType && !selectedType.allow_partial_day && form.partial_day !== "none")
       setForm((value) => ({ ...value, partial_day: "none" }));
   }, [selectedType, form.partial_day]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const submit = async (event) => {
     event.preventDefault();
     const nextErrors = validateForm();
@@ -1697,7 +1706,13 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
                         {busyRequestId === item.request_id ? "Withdrawing…" : "Withdraw"}
                       </Button>
                     )}
-                    {canWrite && item.status === "approved" && (
+                    {canWrite &&
+                      item.status === "approved" &&
+                      !hasLeavePeriodEnded(
+                        item,
+                        tenant?.timezone || "UTC",
+                        new Date(currentTime),
+                      ) && (
                       <Button
                         variant="outline"
                         disabled={Boolean(busyRequestId)}

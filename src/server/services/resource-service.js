@@ -488,6 +488,24 @@ export const transition = async (
       "Stale Resource",
       "The resource changed; refresh before retrying.",
     );
+  if (resource === "leave-requests" && nextStatus === "cancelled") {
+    const period = await client.query(
+      `SELECT CASE
+                WHEN $2 = 'custom_hours' AND $4::time IS NOT NULL
+                  THEN CURRENT_TIMESTAMP > (($3::date + $4::time) AT TIME ZONE timezone)
+                ELSE (CURRENT_TIMESTAMP AT TIME ZONE timezone)::date > $3::date
+              END AS has_ended
+         FROM tenants
+        WHERE tenant_id = $1`,
+      [tenantId, current.partial_day, current.end_date, current.partial_end_time],
+    );
+    if (period.rows[0]?.has_ended)
+      throw new HttpError(
+        409,
+        "Leave Period Ended",
+        "Approved leave can no longer be cancelled after its selected date and time have passed.",
+      );
+  }
   if (
     resource === "leave-requests" &&
     (nextStatus === "pending" || nextStatus === "approved")
