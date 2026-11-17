@@ -23,7 +23,7 @@ const tenantInfo = async (tenantId) => {
 const baseFilters = (req, from, to) => {
   const params = [req.tenantId, from, to];
   const where = ["e.tenant_id=$1"];
-  const add = (sql, value) => { params.push(value); where.push(sql.replace("$VALUE", `$${params.length}`)); };
+  const add = (sql, value) => { params.push(value); where.push(sql.replaceAll("$VALUE", `$${params.length}`)); };
   const query = req.query || {};
   if (query.q) add("(e.name ILIKE $VALUE OR e.employee_number ILIKE $VALUE OR e.employee_id ILIKE $VALUE)", `%${String(query.q).slice(0, 120)}%`);
   if (query.status) add("e.status=$VALUE", String(query.status));
@@ -65,7 +65,7 @@ export const generateMonthlyTimesheet = async (req) => {
      FROM employees_scope s CROSS JOIN days d
      LEFT JOIN attendance a ON a.employee_id=s.employee_id AND a.local_date=d.local_date
      GROUP BY s.tenant_id,s.employee_id,s.employee_number,s.name,s.job_id,s.job_title,s.email
-     ORDER BY s.name ASC,s.employee_id ASC`,
+     ORDER BY s.employee_number ASC,s.employee_id ASC`,
     params,
   );
   return { month: req.query.month, dates, rows: result.rows, workbook: exportMonthlyTimesheet({ rows: result.rows, dates }) };
@@ -112,7 +112,7 @@ const payroll = async (req, info, all) => {
      FROM employees_scope s LEFT JOIN attendance a ON a.employee_id=s.employee_id
        LEFT JOIN approved_overtime o ON o.employee_id=s.employee_id
        LEFT JOIN leave_totals l ON l.employee_id=s.employee_id
-     ORDER BY s.name ASC,s.employee_id ASC`,
+     ORDER BY s.employee_number ASC,s.employee_id ASC`,
     params,
   );
   return { rows: result.rows, basis: "Worked and attendance-derived overtime come from attendance summaries. Approved overtime requests are shown separately so they are not double-counted; leave totals include approved requests only.", title: "Payroll preparation timesheet" };
@@ -128,7 +128,7 @@ const absenteeism = async (req, info) => {
             count(*)::integer AS recorded_days
        FROM employees e JOIN departments d ON d.tenant_id=e.tenant_id AND d.department_id=e.department_id
        LEFT JOIN attendance_summaries s ON s.tenant_id=e.tenant_id AND s.employee_id=e.employee_id AND s.local_date BETWEEN $2::date AND $3::date
-      WHERE ${where.join(" AND ")} GROUP BY e.employee_id,e.employee_number,e.name,e.department_id,d.name ORDER BY e.name`,
+      WHERE ${where.join(" AND ")} GROUP BY e.employee_id,e.employee_number,e.name,e.department_id,d.name ORDER BY e.employee_number,e.employee_id`,
     params,
   );
   return { rows: result.rows, basis: "Counts distinguish absent, approved leave, and incomplete attendance statuses in the selected tenant-local date range.", title: "Organization absenteeism" };
@@ -165,7 +165,7 @@ const leaveTaken = async (req, info) => {
   const leaveTypeParameter = `$${params.length}`;
   const result = await pool.query(
     `SELECT lr.request_id,e.employee_id,e.employee_number,e.name,
-            d.name AS department_name,j.title AS job_title,
+            e.tenant_id AS company_name,j.title AS job_title,
             COALESCE(m.name,'') AS manager_name,lt.name AS leave_type_name,
             lt.unit,CASE WHEN lt.is_paid THEN 'Paid' ELSE 'Unpaid' END AS payment_type,
             lr.start_date,lr.end_date,lr.partial_day,
@@ -177,8 +177,6 @@ const leaveTaken = async (req, info) => {
        FROM leave_requests lr
        JOIN employees e
          ON e.tenant_id=lr.tenant_id AND e.employee_id=lr.employee_id
-       JOIN departments d
-         ON d.tenant_id=e.tenant_id AND d.department_id=e.department_id
        JOIN job_profiles j
          ON j.tenant_id=e.tenant_id AND j.job_id=e.job_id
        JOIN leave_types lt
@@ -191,7 +189,7 @@ const leaveTaken = async (req, info) => {
         AND lr.status='approved'
         AND lr.start_date <= $3::date AND lr.end_date >= $2::date
         AND (${leaveTypeParameter}::text IS NULL OR lr.leave_type_id=${leaveTypeParameter})
-      ORDER BY lr.start_date DESC,e.name ASC,lr.request_id ASC`,
+      ORDER BY e.employee_number ASC,lr.start_date DESC,lr.request_id ASC`,
     params,
   );
   return {
@@ -211,7 +209,7 @@ const liability = async (req, info) => {
        FROM employees e JOIN departments d ON d.tenant_id=e.tenant_id AND d.department_id=e.department_id
        JOIN leave_balances b ON b.tenant_id=e.tenant_id AND b.employee_id=e.employee_id
        JOIN leave_types lt ON lt.tenant_id=b.tenant_id AND lt.leave_type_id=b.leave_type_id
-      WHERE ${where.join(" AND ")} AND b.as_of BETWEEN $2::date AND $3::date ORDER BY e.name,lt.name`,
+      WHERE ${where.join(" AND ")} AND b.as_of BETWEEN $2::date AND $3::date ORDER BY e.employee_number,lt.name,e.employee_id`,
     [...params, rate],
   );
   return { rows: result.rows, basis: "Remaining leave balances are multiplied by a mock valuation rate and labeled as an estimate; this does not execute payroll or accounting.", title: "End-of-year leave balance liability", valuation_rate: rate };

@@ -385,10 +385,11 @@ test(
       .set("x-csrf-token", context.body.csrf_token)
       .send({ ...alex.body, manager_id: "ns-alex" });
     assert.equal(invalidHierarchy.status, 422);
-    const payroll = await admin.get("/api/v1/reports/payroll-timesheet?from=2026-09-01&to=2026-09-30&page_size=2");
+    const payroll = await admin.get("/api/v1/reports/payroll-timesheet?from=2026-09-01&to=2026-09-30&page_size=2&q=NS-000");
     assert.equal(payroll.status, 200);
     assert.equal(payroll.body.preset, "payroll-timesheet");
     assert.ok(payroll.body.items.length <= 2);
+    assert.deepEqual(payroll.body.items.map((row) => row.employee_number), ["NS-0001", "NS-0002"]);
     const payrollCsv = await admin.get("/api/v1/reports/payroll-timesheet.csv?from=2026-09-01&to=2026-09-30");
     assert.equal(payrollCsv.status, 200);
     assert.match(payrollCsv.headers["content-type"], /text\/csv/);
@@ -405,13 +406,14 @@ test(
     assert.equal(leaveTaken.status, 200);
     assert.equal(leaveTaken.body.preset, "leave-taken");
     assert.ok(leaveTaken.body.items.some((row) => row.employee_id === "ns-morgan" && row.leave_type_name === "Annual Leave"));
+    assert.ok(leaveTaken.body.items.every((row) => row.company_name === "northstar"));
     assert.ok(leaveTaken.body.items.every((row) => row.start_date <= "2026-07-31" && row.end_date >= "2026-07-01"));
     const leaveTakenCsv = await admin.get("/api/v1/reports/leave-taken.csv?from=2026-07-01&to=2026-07-31");
     assert.equal(leaveTakenCsv.status, 200);
-    assert.equal(leaveTakenCsv.text.split("\n")[0], "employee_number,employee_name,department,role,manager,leave_type_name,payment_type,start_date,end_date,duration,partial_minutes,chargeable_amount,unit,reason,approved_by,submitted_at,decided_at");
+    assert.equal(leaveTakenCsv.text.split("\n")[0], "employee_number,employee_name,company_name,role,manager,leave_type_name,payment_type,start_date,end_date,duration,partial_minutes,chargeable_amount,unit,reason,approved_by,submitted_at,decided_at");
     assert.match(leaveTakenCsv.text, /Morgan Santos/);
-    assert.match(leaveTakenCsv.text, /NS-0002,Morgan Santos/);
-    const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09").buffer(true).parse(binaryParser);
+    assert.match(leaveTakenCsv.text, /NS-0002,Morgan Santos,northstar,/);
+    const payrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-09&q=NS-000").buffer(true).parse(binaryParser);
     assert.equal(payrollXls.status, 200);
     assert.match(payrollXls.headers["content-type"], /application\/vnd\.ms-excel/);
     assert.match(payrollXls.headers["content-disposition"], /Monthly_Time_Logs\.xls/);
@@ -419,8 +421,9 @@ test(
     const payrollWorkbook = XLSX.read(payrollXls.body, { type: "buffer" });
     assert.deepEqual(payrollWorkbook.SheetNames, ["Monthly Time Logs_Hours_1", "Monthly Time Logs_Decimal_2"]);
     const payrollHours = XLSX.utils.sheet_to_json(payrollWorkbook.Sheets["Monthly Time Logs_Hours_1"], { header: 1 });
-    assert.deepEqual(payrollHours[0].slice(0, 7), ["Employee Number", "Employee Name", "Email ID", "Company Name", "Role", "Job Name", "01-Sep-2026"]);
+    assert.deepEqual(payrollHours[0].slice(0, 6), ["Employee Number", "Employee Name", "Email ID", "Company Name", "Role", "01-Sep-2026"]);
     assert.equal(payrollHours[1][0], "NS-0001");
+    assert.deepEqual(payrollHours.slice(1, 4).map((row) => row[0]), ["NS-0001", "NS-0002", "NS-0003"]);
     assert.equal(payrollHours[1][3], "northstar");
     const invalidPayrollXls = await admin.get("/api/v1/reports/payroll-timesheet.xls?month=2026-13");
     assert.equal(invalidPayrollXls.status, 422);

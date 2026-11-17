@@ -3575,12 +3575,11 @@ function OrganizationReports({ data, tenant }) {
     month: today.slice(0, 7),
     from: `${today.slice(0, 8)}01`,
     to: today,
-    sort: "name",
     page: "1",
     pageSize: "25",
   };
   const [view, setView, resetView] = useDataViewState("organization-reports", defaults);
-  const { preset, query, status, department, manager, job, location, leaveType, month, from, to, sort } = view;
+  const { preset, query, status, department, manager, job, location, leaveType, month, from, to } = view;
   const page = Number(view.page) || 1;
   const pageSize = Number(view.pageSize) || 25;
   const [report, setReport] = useState(null);
@@ -3603,7 +3602,6 @@ function OrganizationReports({ data, tenant }) {
         leave_type_id: leaveType === "all" ? "" : leaveType,
         from: reportFrom,
         to: reportTo,
-        sort,
         page,
         page_size: pageSize,
       }));
@@ -3612,7 +3610,7 @@ function OrganizationReports({ data, tenant }) {
     } finally {
       setLoading(false);
     }
-  }, [preset, query, status, department, manager, job, location, leaveType, selectedMonth, from, to, sort, page, pageSize]);
+  }, [preset, query, status, department, manager, job, location, leaveType, selectedMonth, from, to, page, pageSize]);
   useEffect(() => { load(); }, [load]);
   const download = async () => {
     try {
@@ -3628,7 +3626,6 @@ function OrganizationReports({ data, tenant }) {
         location_id: location === "all" ? "" : location,
         leave_type_id: leaveType === "all" ? "" : leaveType,
         ...(preset === "payroll-timesheet" ? { month: selectedMonth } : { from: reportFrom, to: reportTo }),
-        sort,
       })}`);
       const link = document.createElement("a");
       link.href = URL.createObjectURL(result.blob);
@@ -3646,7 +3643,7 @@ function OrganizationReports({ data, tenant }) {
        : preset === "overtime-by-department"
          ? [["department_name", "Department"], ["employee_count", "Employees"], ["overtime_mins", "Attendance OT"], ["approved_overtime_mins", "Approved OT"], ["limit_exception_mins", "Limit exceptions"]]
          : preset === "leave-taken"
-           ? [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["payment_type", "Pay"], ["start_date", "From"], ["end_date", "To"], ["duration", "Duration"], ["chargeable_amount", "Charged"], ["unit", "Unit"], ["approved_by", "Approved by"], ["reason", "Reason"]]
+           ? [["name", "Employee"], ["company_name", "Company Name"], ["leave_type_name", "Leave type"], ["payment_type", "Pay"], ["start_date", "From"], ["end_date", "To"], ["duration", "Duration"], ["chargeable_amount", "Charged"], ["unit", "Unit"], ["approved_by", "Approved by"], ["reason", "Reason"]]
            : [["name", "Employee"], ["department_name", "Department"], ["leave_type_name", "Leave type"], ["remaining", "Balance"], ["unit", "Unit"], ["estimated_value", "Estimated value"]];
   columns.unshift(["employee_number", preset === "overtime-by-department" ? "Employee numbers" : "Employee number"]);
   const setFilter = (key, value) => setView({ [key]: value, page: "1" });
@@ -3662,9 +3659,6 @@ function OrganizationReports({ data, tenant }) {
         onApplyState={(next) => setView({ ...defaults, ...next })}
         query={query}
         onQuery={(value) => setFilter("query", value)}
-        sort={sort}
-        onSort={(value) => setFilter("sort", value)}
-        sortOptions={[{ value: "name", label: "Employee / name" }, { value: "department_name", label: "Department" }, { value: "worked_mins", label: "Worked minutes" }]}
         resultCount={report?.total || 0}
         filters={[
           { id: "status", label: "Status", value: status, onChange: (value) => setFilter("status", value), options: [{ value: "all", label: "All employee statuses" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }] },

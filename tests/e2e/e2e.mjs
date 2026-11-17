@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { launchAuditBrowser, appUrl } from "../support/audit-config.mjs";
 
 const credentials = {
@@ -92,13 +93,14 @@ await test("administrator sees tenant administration and audit data", async (pag
   await signIn(page, "admin");
   await page.getByRole("heading", { name: "Platform overview" }).waitFor();
   await page.getByRole("button", { name: "Enter organization" }).first().click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await page.getByRole("heading", { name: "Organization overview" }).waitFor();
-  await page.getByRole("button", { name: "Directory", exact: true }).click();
+  await page.getByLabel("Primary navigation").getByRole("button", { name: "Directory", exact: true }).click();
   await page.getByRole("heading", { name: "Employee directory" }).waitFor();
   await page.getByRole("columnheader", { name: "Employee" }).waitFor();
-  await page.getByRole("button", { name: "Departments", exact: true }).click();
+  await page.getByLabel("Primary navigation").getByRole("button", { name: "Departments", exact: true }).click();
   await page.getByRole("heading", { name: "Departments" }).waitFor();
-  await page.getByRole("button", { name: "Audit", exact: true }).click();
+  await page.getByLabel("Primary navigation").getByRole("button", { name: "Audit", exact: true }).click();
   await page.getByRole("heading", { name: "Audit events" }).waitFor();
   await page.getByRole("button", { name: "Export all filtered events" }).waitFor();
 });
@@ -153,12 +155,14 @@ await test("manager approves a direct report request", async (page) => {
     .filter({ hasText: flowId })
     .first();
   await card.getByRole("button", { name: "Approve" }).click();
+  await page.getByRole("button", { name: "Confirm approval" }).click();
   await page.getByRole("status").waitFor();
   const correction = page
     .locator('[class*="rounded-xl"]')
     .filter({ hasText: correctionId })
     .first();
   await correction.getByRole("button", { name: "Approve" }).click();
+  await page.getByRole("button", { name: "Confirm approval" }).click();
   await page.getByRole("status").waitFor();
 });
 
