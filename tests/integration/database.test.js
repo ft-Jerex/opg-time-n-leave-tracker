@@ -451,6 +451,45 @@ test(
     assert.equal(directory.status, 201);
     assert.equal(directory.body.employee.employee_number, manualNumber);
     assert.equal(Object.prototype.hasOwnProperty.call(directory.body, "password"), false);
+    const initialCredits = await pool.query(
+      `SELECT b.leave_type_id, b.accrued, b.remaining, b.as_of, l.amount, l.entry_type, l.entry_id
+         FROM leave_balances b
+         JOIN leave_ledger_entries l ON l.tenant_id=b.tenant_id
+          AND l.employee_id=b.employee_id AND l.leave_type_id=b.leave_type_id
+        WHERE b.tenant_id=$1 AND b.employee_id=$2
+        ORDER BY b.leave_type_id`,
+      ["northstar", directory.body.employee.employee_id],
+    );
+    assert.deepEqual(initialCredits.rows.map((row) => ({
+      leave_type_id: row.leave_type_id,
+      accrued: Number(row.accrued),
+      remaining: Number(row.remaining),
+      ledger_amount: Number(row.amount),
+      entry_type: row.entry_type,
+    })), [
+      { leave_type_id: "ns-annual", accrued: 1.666667, remaining: 1.666667, ledger_amount: 1.666667, entry_type: "accrual" },
+      { leave_type_id: "ns-sick", accrued: 10, remaining: 10, ledger_amount: 10, entry_type: "accrual" },
+    ]);
+    assert.equal(initialCredits.rows[0].entry_id,
+      `leave-accrual:northstar:${directory.body.employee.employee_id}:ns-annual:${initialCredits.rows[0].as_of.slice(0, 7)}`);
+    const generatedDirectory = await admin
+      .post("/api/v1/hr/directory")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ ...directory.body.employee, employee_id: undefined, employee_number: undefined, name: "Generated Number User" });
+    assert.equal(generatedDirectory.status, 201);
+    assert.match(generatedDirectory.body.employee.employee_number, /^NORTHSTAR-[A-F0-9]{8}$/);
+    assert.ok(generatedDirectory.body.employee.employee_number.endsWith(generatedDirectory.body.employee.employee_id.slice(-8).toUpperCase()));
+    const genericEmployeeId = `generic-${Date.now()}`;
+    const genericEmployee = await admin
+      .post("/api/v1/employees")
+      .set("x-csrf-token", context.body.csrf_token)
+      .send({ ...directory.body.employee, employee_id: genericEmployeeId, employee_number: `NS-${genericEmployeeId}`, name: "Generic API User" });
+    assert.equal(genericEmployee.status, 201);
+    const genericCredits = await pool.query(
+      "SELECT count(*)::integer AS count FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2",
+      ["northstar", genericEmployeeId],
+    );
+    assert.equal(genericCredits.rows[0].count, 2);
     const editedNumber = `${manualNumber}-EDITED`;
     const editedDirectory = await admin
       .put(`/api/v1/hr/directory/${directory.body.employee.employee_id}`)

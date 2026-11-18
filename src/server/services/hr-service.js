@@ -5,11 +5,13 @@ import { HttpError } from "../views/problem-view.js";
 import { roleCapabilities } from "../domain/role-capabilities.js";
 import { partialLeaveCharge } from "../../shared/leave.js";
 import { refreshAttendanceSummary } from "./attendance-summary-service.js";
+import { grantInitialLeaveCredits } from "./initial-leave-credit-service.js";
 
 export { roleCapabilities } from "../domain/role-capabilities.js";
 
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
 const now = () => new Date().toISOString();
+const generatedEmployeeNumber = (tenantId, employeeId) => `${tenantId.toUpperCase()}-${employeeId.slice(-8).toUpperCase()}`;
 const invitationToken = () => crypto.randomBytes(32).toString("base64url");
 const invitationHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const invitationUrl = (req, token) => {
@@ -214,7 +216,7 @@ const createPortalAccount = async (client, tenantId, employee, account) => {
 export const createDirectoryEntry = async (req) => withTransaction(async (client) => {
   const body = req.body || {};
   const employeeId = body.employee_id || id("employee");
-  const employee = employeePayload(body, req.tenantId, employeeId);
+  const employee = employeePayload({ ...body, employee_number: body.employee_number ?? generatedEmployeeNumber(req.tenantId, employeeId) }, req.tenantId, employeeId);
   validateEmployee(employee);
   await assertManager(client, req.tenantId, employee.employee_id, employee.manager_id);
   const duplicateNumber = await client.query("SELECT 1 FROM employees WHERE tenant_id=$1 AND employee_number=$2 LIMIT 1", [req.tenantId, employee.employee_number]);
@@ -224,6 +226,7 @@ export const createDirectoryEntry = async (req) => withTransaction(async (client
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [employee.employee_id, req.tenantId, employee.employee_number, employee.name, employee.job_id, employee.manager_id, employee.department_id, employee.location_id, employee.holiday_calendar_id, employee.work_schedule, employee.start_date, employee.status],
   );
+  await grantInitialLeaveCredits(client, req.tenantId, employee, req.actor.user_id);
   const account = body.account?.enabled ? await createPortalAccount(client, req.tenantId, employee, { ...body.account, created_by: req.actor.user_id, request: req }) : null;
   await audit(client, req, "directory_create", "Employee", employee.employee_id, "HR directory entry created", { account_created: Boolean(account) });
   return { employee, account };

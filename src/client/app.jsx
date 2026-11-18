@@ -28,6 +28,7 @@ import {
   hasLeavePeriodEnded,
   partialLeaveCharge,
 } from "./lib/leave";
+import { groupLeavePolicies } from "./lib/leave-policy-groups";
 import { normalizeSearchQuery } from "../shared/search";
 import { Button } from "./components/ui/button";
 import {
@@ -2962,7 +2963,10 @@ function Directory({ data, refresh, notify, user, onUserChange }) {
   const locations = new Map(data.locations.map((item) => [item.location_id, item.name]));
   const managers = new Map(data.employees.map((item) => [item.employee_id, item.name]));
   const userByEmployee = new Map(data.users.map((item) => [item.employee_id, item]));
-  const defaults = () => ({ employee_number: "", name: "", job_id: activeJobs[0]?.job_id || "", manager_id: "", department_id: data.departments[0]?.department_id || "", location_id: data.locations[0]?.location_id || "", holiday_calendar_id: data["holiday-calendars"][0]?.holiday_calendar_id || "", schedule_id: data["work-schedules"][0]?.schedule_id || "", start_date: new Date().toISOString().slice(0, 10), status: "active", account_enabled: false, account_exists: false, email: "", password: "", roles: ["Employee"] });
+  const defaults = () => {
+    const employee_id = `employee-${crypto.randomUUID()}`;
+    return { employee_id, employee_number: `${user.tenant_id.toUpperCase()}-${employee_id.slice(-8).toUpperCase()}`, name: "", job_id: activeJobs[0]?.job_id || "", manager_id: "", department_id: data.departments[0]?.department_id || "", location_id: data.locations[0]?.location_id || "", holiday_calendar_id: data["holiday-calendars"][0]?.holiday_calendar_id || "", schedule_id: data["work-schedules"][0]?.schedule_id || "", start_date: new Date().toISOString().slice(0, 10), status: "active", account_enabled: false, account_exists: false, email: "", password: "", roles: ["Employee"] };
+  };
   const rows = data.employees.filter((item) => (status === "all" || item.status === status) && (department === "all" || item.department_id === department) && (job === "all" || item.job_id === job) && (location === "all" || item.location_id === location) && `${item.name} ${item.employee_number}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => {
     const left = String(sort === "department" ? departments.get(a.department_id) : sort === "job" ? jobs.get(a.job_id) : sort === "location" ? locations.get(a.location_id) : a.name).toLowerCase();
     const right = String(sort === "department" ? departments.get(b.department_id) : sort === "job" ? jobs.get(b.job_id) : sort === "location" ? locations.get(b.location_id) : b.name).toLowerCase();
@@ -2987,7 +2991,7 @@ function Directory({ data, refresh, notify, user, onUserChange }) {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
-    const body = { employee_number: form.employee_number, name: form.name, job_id: form.job_id, manager_id: form.manager_id || null, department_id: form.department_id, location_id: form.location_id, holiday_calendar_id: form.holiday_calendar_id, work_schedule: { schedule_id: form.schedule_id }, start_date: form.start_date, status: form.status };
+    const body = { ...(modal === "create" ? { employee_id: form.employee_id } : {}), employee_number: form.employee_number, name: form.name, job_id: form.job_id, manager_id: form.manager_id || null, department_id: form.department_id, location_id: form.location_id, holiday_calendar_id: form.holiday_calendar_id, work_schedule: { schedule_id: form.schedule_id }, start_date: form.start_date, status: form.status };
     try {
       if ((modal === "create" || !form.account_exists) && form.account_enabled) body.account = { enabled: true, email: form.email, invite: true, roles: form.roles };
       else if (form.account_exists && form.roles[0] !== form.initial_roles[0]) body.account = { roles: form.roles };
@@ -3808,7 +3812,7 @@ function Policies({ data, refresh, notify }) {
     description: "",
   });
   const [mapping, setMapping] = useState({
-    job_id: "",
+    job_ids: [],
     leave_type_id: "",
     annual_allotment: 20,
     carry_over_limit: 5,
@@ -3821,14 +3825,22 @@ function Policies({ data, refresh, notify }) {
     data["leave-types"].find((x) => x.leave_type_id === id)?.name || id;
   const job = (id) =>
     data["job-profiles"].find((x) => x.job_id === id)?.title || id;
+  const activeJobs = data["job-profiles"].filter((item) => item.status === "active");
+  const groupedPolicies = groupLeavePolicies(data["job-leave-policies"]);
+  const visiblePolicies = groupedPolicies.filter(
+    (item) =>
+      (status === "all" || item.status === status) &&
+      `${type(item.leave_type_id)} ${item.job_ids.map(job).join(" ")}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
   useEffect(() => {
     setMapping((value) => ({
       ...value,
-      job_id: value.job_id || data["job-profiles"][0]?.job_id || "",
       leave_type_id:
         value.leave_type_id || data["leave-types"][0]?.leave_type_id || "",
     }));
-  }, [data["job-profiles"].length, data["leave-types"].length]);
+  }, [data["leave-types"].length]);
   const createType = async (e) => {
     e.preventDefault();
     try {
@@ -3847,7 +3859,7 @@ function Policies({ data, refresh, notify }) {
   const openCreateMapping = () => {
     setEditingPolicy(null);
     setMapping({
-      job_id: data["job-profiles"].find((item) => item.status === "active")?.job_id || "",
+      job_ids: [],
       leave_type_id: data["leave-types"].find((item) => item.status === "active")?.leave_type_id || "",
       annual_allotment: 20,
       carry_over_limit: 5,
@@ -3861,7 +3873,7 @@ function Policies({ data, refresh, notify }) {
   const openEditMapping = (policy) => {
     setEditingPolicy(policy);
     setMapping({
-      job_id: policy.job_id,
+      job_ids: policy.job_ids,
       leave_type_id: policy.leave_type_id,
       annual_allotment: policy.annual_allotment,
       carry_over_limit: policy.carry_over_limit,
@@ -3876,8 +3888,31 @@ function Policies({ data, refresh, notify }) {
     setModal(null);
     setEditingPolicy(null);
   };
+  const toggleJob = (jobId) => {
+    if (editingPolicy?.job_ids.includes(jobId)) return;
+    setMapping((current) => ({
+      ...current,
+      job_ids: current.job_ids.includes(jobId)
+        ? current.job_ids.filter((id) => id !== jobId)
+        : [...current.job_ids, jobId],
+    }));
+  };
+  const jobHasAnotherPolicy = (jobId) =>
+    data["job-leave-policies"].some(
+      (policy) =>
+        policy.status === "active" &&
+        policy.job_id === jobId &&
+        policy.leave_type_id === mapping.leave_type_id &&
+        (!policy.effective_to || policy.effective_to >= mapping.effective_from) &&
+        (!editingPolicy?.effective_to || policy.effective_from <= editingPolicy.effective_to) &&
+        !editingPolicy?.policies.some((item) => item.policy_id === policy.policy_id),
+    );
   const saveMapping = async (e) => {
     e.preventDefault();
+    if (!mapping.job_ids.length) {
+      notify("Assign at least one job to this policy.", "error");
+      return;
+    }
     try {
       const values = {
         ...mapping,
@@ -3885,28 +3920,57 @@ function Policies({ data, refresh, notify }) {
         carry_over_limit: Number(mapping.carry_over_limit),
       };
       delete values.reset_frequency;
+      delete values.job_ids;
       const accrualRule = {
         ...(editingPolicy?.accrual_rule || { type: "monthly" }),
         reset_frequency: mapping.reset_frequency,
       };
+      // shortcut: assignments use existing per-job endpoints; add a transactional batch endpoint if partial network failures become a problem.
       if (editingPolicy) {
-        await api.update("job-leave-policies", editingPolicy.policy_id, {
-          ...editingPolicy,
-          ...values,
-          accrual_rule: accrualRule,
-        });
-        notify("Policy mapping updated.");
+        await Promise.all(
+          editingPolicy.policies.map((policy) =>
+            api.update("job-leave-policies", policy.policy_id, {
+              ...policy,
+              ...values,
+              job_id: policy.job_id,
+              accrual_rule: accrualRule,
+            }),
+          ),
+        );
+        const existingJobs = new Set(editingPolicy.job_ids);
+        await Promise.all(
+          mapping.job_ids
+            .filter((jobId) => !existingJobs.has(jobId))
+            .map((jobId) =>
+              api.create("job-leave-policies", {
+                ...values,
+                job_id: jobId,
+                accrual_rule: accrualRule,
+                counting_rule: editingPolicy.counting_rule,
+                request_window: editingPolicy.request_window,
+                documentation_rule: editingPolicy.documentation_rule,
+                effective_to: editingPolicy.effective_to,
+                status: editingPolicy.status,
+              }),
+            ),
+        );
+        notify("Leave policy updated.");
       } else {
-        await api.create("job-leave-policies", {
-          ...values,
-          accrual_rule: accrualRule,
-          counting_rule: { weekends: false, holidays: false },
-          request_window: { min_days: 1, max_days: 365 },
-          documentation_rule: {},
-          effective_to: null,
-          status: "active",
-        });
-        notify("Policy mapping created.");
+        await Promise.all(
+          mapping.job_ids.map((jobId) =>
+            api.create("job-leave-policies", {
+              ...values,
+              job_id: jobId,
+              accrual_rule: accrualRule,
+              counting_rule: { weekends: false, holidays: false },
+              request_window: { min_days: 1, max_days: 365 },
+              documentation_rule: {},
+              effective_to: null,
+              status: "active",
+            }),
+          ),
+        );
+        notify("Leave policy created.");
       }
       closeMapping();
       await refresh();
@@ -3918,26 +3982,34 @@ function Policies({ data, refresh, notify }) {
     <div className="space-y-5">
       <Header
         title="Leave policies"
-        detail="Current job-to-leave mappings for this tenant."
+        detail="Create each policy once, then assign the jobs that use it."
         action={
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setModal("type")}>
               New leave type
             </Button>
-            <Button onClick={openCreateMapping}>New mapping</Button>
+            <Button onClick={openCreateMapping}>New policy</Button>
           </div>
         }
       />
-      <FilterToolbar viewKey="policies" resultCount={data["job-leave-policies"].length} query={query} onQuery={setQuery} filters={[{ label: "Status", value: status, onChange: setStatus, options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "all", label: "All statuses" }] }]} onClear={() => { setQuery(""); setStatus("active"); }} />
-      {data["job-leave-policies"].filter((item) => (status === "all" || item.status === status) && `${type(item.leave_type_id)} ${job(item.job_id)}`.toLowerCase().includes(query.toLowerCase())).length ? (
+      <FilterToolbar viewKey="policies" resultCount={visiblePolicies.length} query={query} onQuery={setQuery} filters={[{ label: "Status", value: status, onChange: setStatus, options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "all", label: "All statuses" }] }]} onClear={() => { setQuery(""); setStatus("active"); }} />
+      {visiblePolicies.length ? (
         <div className="grid gap-4 lg:grid-cols-2">
-          {data["job-leave-policies"].filter((item) => (status === "all" || item.status === status) && `${type(item.leave_type_id)} ${job(item.job_id)}`.toLowerCase().includes(query.toLowerCase())).map((item) => (
+          {visiblePolicies.map((item) => (
             <Card key={item.policy_id}>
               <CardHeader>
                 <CardTitle>{type(item.leave_type_id)}</CardTitle>
-                <CardDescription>Job: {job(item.job_id)}</CardDescription>
+                <CardDescription>Assigned to {item.job_ids.length} {item.job_ids.length === 1 ? "job" : "jobs"}</CardDescription>
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-3 text-sm">
+                <div className="col-span-2">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assigned jobs</p>
+                  <div className="flex flex-wrap gap-2">
+                    {item.job_ids.map((jobId) => (
+                      <span className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold" key={jobId}>{job(jobId)}</span>
+                    ))}
+                  </div>
+                </div>
                 <Row label="Annual allowance" value={formatLeaveAmount(item.annual_allotment)} />
                 <Row label="Carry-over limit" value={formatLeaveAmount(item.carry_over_limit)} />
                 <Row label="Accrual" value={human(item.accrual_rule?.type || "monthly")} />
@@ -4020,28 +4092,8 @@ function Policies({ data, refresh, notify }) {
         </Modal>
       )}
       {modal === "mapping" && (
-        <Modal title={editingPolicy ? "Edit policy mapping" : "Create policy mapping"} close={closeMapping}>
+        <Modal title={editingPolicy ? "Edit leave policy" : "Create leave policy"} close={closeMapping}>
           <form className="space-y-4" onSubmit={saveMapping}>
-            <label className="block text-sm font-semibold">
-              Job
-              <select
-                aria-label="Policy job"
-                value={mapping.job_id}
-                disabled={Boolean(editingPolicy)}
-                onChange={(e) =>
-                  setMapping({ ...mapping, job_id: e.target.value })
-                }
-                className="mt-2 h-11 w-full rounded-lg border bg-white px-3"
-              >
-                {data["job-profiles"]
-                  .filter((item) => item.status === "active")
-                  .map((item) => (
-                    <option key={item.job_id} value={item.job_id}>
-                      {item.title}
-                    </option>
-                  ))}
-              </select>
-            </label>
             <label className="block text-sm font-semibold">
               Leave type
               <select
@@ -4062,6 +4114,29 @@ function Policies({ data, refresh, notify }) {
                   ))}
               </select>
             </label>
+            <fieldset>
+              <legend className="text-sm font-semibold">Assigned jobs</legend>
+              <div className="mt-2 max-h-52 divide-y overflow-y-auto rounded-lg border bg-white">
+                {activeJobs.map((item) => {
+                  const alreadyAssigned = Boolean(editingPolicy?.job_ids.includes(item.job_id));
+                  const unavailable = jobHasAnotherPolicy(item.job_id);
+                  return (
+                    <label className={`flex min-h-11 items-center gap-3 px-3 py-2 text-sm ${unavailable ? "text-muted-foreground" : ""}`} key={item.job_id}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Assign ${item.title}`}
+                        checked={mapping.job_ids.includes(item.job_id)}
+                        disabled={alreadyAssigned || unavailable}
+                        onChange={() => toggleJob(item.job_id)}
+                      />
+                      <span className="flex-1 font-medium">{item.title}</span>
+                      {alreadyAssigned ? <span className="text-xs text-muted-foreground">Assigned</span> : unavailable ? <span className="text-xs">Uses another policy</span> : null}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">Existing assignments stay in place so current employee eligibility is not removed.</p>
+            </fieldset>
             <div className="grid grid-cols-2 gap-3">
               <Field
                 label="Annual allowance"
@@ -4145,7 +4220,7 @@ function Policies({ data, refresh, notify }) {
               required
               onChange={(v) => setMapping({ ...mapping, effective_from: v })}
             />
-            <Button className="w-full">{editingPolicy ? "Save policy" : "Create mapping"}</Button>
+            <Button className="w-full">{editingPolicy ? "Save policy" : "Create policy"}</Button>
           </form>
         </Modal>
       )}

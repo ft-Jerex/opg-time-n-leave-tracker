@@ -9,6 +9,7 @@ import {
 import * as repository from "../models/resource-model.js";
 import { partialLeaveCharge } from "../../shared/leave.js";
 import { refreshAttendanceSummary } from "./attendance-summary-service.js";
+import { grantInitialLeaveCredits } from "./initial-leave-credit-service.js";
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
@@ -320,6 +321,8 @@ export const createResource = (resource) => async (req) =>
       req.tenantId,
       payload,
     );
+    if (resource === "employees")
+      await grantInitialLeaveCredits(client, req.tenantId, row, req.actor.user_id);
     if (resource === "leave-ledger-entries") {
       const balance = await client.query(
         "SELECT balance_id FROM leave_balances WHERE tenant_id=$1 AND employee_id=$2 AND leave_type_id=$3 ORDER BY as_of DESC LIMIT 1 FOR UPDATE",

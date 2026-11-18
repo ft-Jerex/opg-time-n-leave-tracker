@@ -98,6 +98,14 @@ await test("administrator sees tenant administration and audit data", async (pag
   await page.getByLabel("Primary navigation").getByRole("button", { name: "Directory", exact: true }).click();
   await page.getByRole("heading", { name: "Employee directory" }).waitFor();
   await page.getByRole("columnheader", { name: "Employee" }).waitFor();
+  await page.getByRole("button", { name: "Add employee" }).click();
+  const employeeNumber = page.getByLabel("Employee number");
+  if (!/^[A-Z0-9-]+-[A-F0-9]{8}$/.test(await employeeNumber.inputValue()))
+    throw new Error("new employee number was not generated");
+  await employeeNumber.fill("CUSTOM-001");
+  if (await employeeNumber.inputValue() !== "CUSTOM-001")
+    throw new Error("generated employee number is not editable");
+  await page.keyboard.press("Escape");
   await page.getByLabel("Primary navigation").getByRole("button", { name: "Departments", exact: true }).click();
   await page.getByRole("heading", { name: "Departments" }).waitFor();
   await page.getByLabel("Primary navigation").getByRole("button", { name: "Audit", exact: true }).click();
