@@ -12,5 +12,6 @@ export const hrRoutes = (app, requireCapability) => {
   router.get("/my-leave-options", send(service.getOwnLeaveOptions));
   router.post("/leave-overrides", requireCapability("leave:override"), send(service.createLeaveOverride, 201));
   router.post("/attendance-overrides", requireCapability("attendance:override"), send(service.createAttendanceOverride, 201));
+  router.post("/attendance-sessions/clock-out", requireCapability("attendance:override"), send(service.clockOutEmployee));
   app.use("/api/v1/hr", router);
 };

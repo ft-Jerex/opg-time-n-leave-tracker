@@ -322,6 +322,36 @@ test(
   const overrideAudit = await pool.query("SELECT action,metadata FROM audit_events WHERE tenant_id=$1 AND target_id=$2", ["northstar", overrideClosed.body.session.session_id]);
   assert.equal(overrideAudit.rows.at(-1).action, "attendance_manual_override");
   assert.equal(overrideAudit.rows.at(-1).metadata.replaced_session_ids.length, 1);
+  const clockOutTimes = await pool.query(
+    `SELECT (CURRENT_TIMESTAMP AT TIME ZONE timezone)::date AS out_date,
+            to_char(CURRENT_TIMESTAMP AT TIME ZONE timezone, 'HH24:MI') AS out_time,
+            ((CURRENT_TIMESTAMP - interval '2 hours') AT TIME ZONE timezone)::date AS in_date,
+            to_char((CURRENT_TIMESTAMP - interval '2 hours') AT TIME ZONE timezone, 'HH24:MI') AS in_time
+       FROM tenants WHERE tenant_id=$1`,
+    ["northstar"],
+  );
+  const times = clockOutTimes.rows[0];
+  const hrOpen = await hr.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-alex", local_date: times.in_date, clock_in_time: times.in_time,
+    reason: "Integration HR clock-out setup",
+  });
+  assert.equal(hrOpen.status, 201);
+  assert.equal((await hr.post("/api/v1/hr/attendance-sessions/clock-out").set("x-csrf-token", hrLogin.body.csrf_token).send({ employee_id: "ns-alex", clock_out_date: times.in_date, clock_out_time: times.in_time, reason: "Too early" })).status, 422);
+  assert.equal((await hr.post("/api/v1/hr/attendance-sessions/clock-out").set("x-csrf-token", hrLogin.body.csrf_token).send({ employee_id: "ns-alex", clock_out_date: "2099-01-01", clock_out_time: "15:00", reason: "In the future" })).status, 422);
+  const hrClockOut = await hr.post("/api/v1/hr/attendance-sessions/clock-out").set("x-csrf-token", hrLogin.body.csrf_token).send({
+    employee_id: "ns-alex", clock_out_date: times.out_date, clock_out_time: times.out_time,
+    reason: "Integration HR clock-out",
+  });
+  assert.equal(hrClockOut.status, 200);
+  assert.equal(hrClockOut.body.session.session_id, hrOpen.body.session.session_id);
+  assert.equal(hrClockOut.body.session.status, "closed");
+  assert.equal(hrClockOut.body.session.source, "hr_bulk_override");
+  assert.equal(hrClockOut.body.summary.local_date, times.in_date);
+  const hrClockOutAudit = await pool.query("SELECT action,reason FROM audit_events WHERE tenant_id=$1 AND target_id=$2 ORDER BY occurred_at", ["northstar", hrOpen.body.session.session_id]);
+  assert.equal(hrClockOutAudit.rows.at(-1).action, "attendance_hr_clock_out");
+  assert.equal(hrClockOutAudit.rows.at(-1).reason, "Integration HR clock-out");
+  assert.equal((await hr.post("/api/v1/hr/attendance-sessions/clock-out").set("x-csrf-token", hrLogin.body.csrf_token).send({ employee_id: "ns-alex", clock_out_date: times.out_date, clock_out_time: times.out_time, reason: "Duplicate" })).status, 409);
+  assert.equal((await user.post("/api/v1/hr/attendance-sessions/clock-out").set("x-csrf-token", userCsrf).send({ employee_id: "ns-alex", clock_out_date: times.out_date, clock_out_time: times.out_time, reason: "Unauthorized" })).status, 403);
   const userOverrideForbidden = await user.post("/api/v1/hr/attendance-overrides").set("x-csrf-token", userCsrf).send({ employee_id: "ns-morgan", local_date: "2027-12-05", clock_in_time: "08:00", reason: "Should be forbidden" });
   assert.equal(userOverrideForbidden.status, 403);
   const userLeaveOverrideForbidden = await user.post("/api/v1/hr/leave-overrides").set("x-csrf-token", userCsrf).send({ employee_id: "ns-morgan" });

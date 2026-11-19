@@ -385,6 +385,50 @@ const localTimeMinutes = (value, field) => {
   return hours * 60 + minutes;
 };
 
+export const clockOutInput = (body = {}) => {
+  const employeeId = String(body.employee_id || "").trim();
+  const localDate = String(body.clock_out_date || "").trim();
+  const localTime = String(body.clock_out_time || "").trim();
+  const reason = String(body.reason || "").trim();
+  const date = new Date(`${localDate}T00:00:00Z`);
+  if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(localDate) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== localDate || !reason)
+    throw new HttpError(422, "Invalid Request", "employee_id, a valid clock_out_date, and reason are required.");
+  localTimeMinutes(localTime, "clock_out_time");
+  return { employeeId, localDate, localTime, reason };
+};
+
+export const clockOutEmployee = async (req) => withTransaction(async (client) => {
+  const { employeeId, localDate, localTime, reason } = clockOutInput(req.body);
+  const open = await client.query(
+    `SELECT s.*, (s.clock_in_at AT TIME ZONE t.timezone)::date AS local_date
+       FROM attendance_sessions s JOIN tenants t ON t.tenant_id=s.tenant_id
+      WHERE s.tenant_id=$1 AND s.employee_id=$2 AND s.status='open'
+      FOR UPDATE OF s`,
+    [req.tenantId, employeeId],
+  );
+  if (!open.rowCount)
+    throw new HttpError(409, "Not Clocked In", "No open attendance session exists for this employee.");
+  const current = open.rows[0];
+  const times = await client.query(
+    `SELECT (($2::date + $3::time) AT TIME ZONE timezone) AS clock_out_at
+       FROM tenants WHERE tenant_id=$1`,
+    [req.tenantId, localDate, localTime],
+  );
+  const clockOutAt = times.rows[0].clock_out_at;
+  if (new Date(clockOutAt) <= new Date(current.clock_in_at) || new Date(clockOutAt) > new Date())
+    throw new HttpError(422, "Invalid Clock-out", "Clock-out must be after clock-in and cannot be in the future.");
+  const updated = await client.query(
+    `UPDATE attendance_sessions SET clock_out_at=$3,status='closed',version=version+1
+      WHERE tenant_id=$1 AND session_id=$2 RETURNING *`,
+    [req.tenantId, current.session_id, clockOutAt],
+  );
+  const summary = await refreshAttendanceSummary(client, req.tenantId, employeeId, current.local_date);
+  await audit(client, req, "attendance_hr_clock_out", "AttendanceSession", current.session_id, reason, {
+    employee_id: employeeId, clock_in_at: current.clock_in_at, clock_out_at: clockOutAt,
+  });
+  return { session: updated.rows[0], summary };
+});
+
 export const createAttendanceOverride = async (req) => withTransaction(async (client) => {
   const body = req.body || {};
   const employeeId = String(body.employee_id || "").trim();

@@ -3304,6 +3304,16 @@ function Overrides({ data, refresh, notify, user, tenant }) {
     clock_out_time: "",
     reason: "",
   });
+  const [openSessions, setOpenSessions] = useState(null);
+  const [clockOutLoadError, setClockOutLoadError] = useState("");
+  const [clockOutForm, setClockOutForm] = useState({ employee_id: "", clock_out_date: "", clock_out_time: "", reason: "" });
+  const [clockOutBusy, setClockOutBusy] = useState(false);
+  useEffect(() => {
+    // shortcut: The picker loads up to 500 open sessions; paginate if a tenant exceeds that.
+    api.list("attendance-sessions", { status: "open", limit: 500 })
+      .then(setOpenSessions)
+      .catch((error) => setClockOutLoadError(error.message));
+  }, []);
   const [leaveForm, setLeaveForm] = useState({
     employee_id: "",
     leave_type_id: "",
@@ -3390,6 +3400,25 @@ function Overrides({ data, refresh, notify, user, tenant }) {
       await refresh();
     } catch (error) {
       notify(error.message, "error");
+    }
+  };
+  const selectedOpenSession = openSessions?.find((item) => item.employee_id === (clockOutForm.employee_id || openSessions[0]?.employee_id));
+  const selectedOpenName = employees.find((item) => item.employee_id === selectedOpenSession?.employee_id)?.name || selectedOpenSession?.employee_id;
+  const openSince = selectedOpenSession && new Intl.DateTimeFormat("en-PH", { timeZone: tenant?.timezone || "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(selectedOpenSession.clock_in_at));
+  const submitClockOut = async (event) => {
+    event.preventDefault();
+    if (!selectedOpenSession || !window.confirm(`Clock out ${selectedOpenName} at ${clockOutForm.clock_out_date} ${clockOutForm.clock_out_time} (${tenant?.timezone || "UTC"})? Their session started ${openSince}.`)) return;
+    setClockOutBusy(true);
+    try {
+      await api.clockOutEmployee({ ...clockOutForm, employee_id: selectedOpenSession.employee_id });
+      notify(`${selectedOpenName} clocked out.`);
+      setClockOutForm({ employee_id: "", clock_out_date: "", clock_out_time: "", reason: "" });
+      setOpenSessions((sessions) => sessions.filter((item) => item.session_id !== selectedOpenSession.session_id));
+      await refresh();
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setClockOutBusy(false);
     }
   };
   const submitLeaveOverride = async (event) => {
@@ -3514,6 +3543,22 @@ function Overrides({ data, refresh, notify, user, tenant }) {
             </div>
             <Button disabled={!leaveBalance || leaveCharge <= 0 || !leaveForm.reason.trim()}>Record and deduct leave</Button>
           </form>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Clock out employee</CardTitle>
+          <CardDescription>Close an open session at the recorded local date and time. The original clock-in stays in the audit history.</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-6">
+          {clockOutLoadError ? <p role="alert" className="text-sm text-red-700">Could not load open sessions: {clockOutLoadError}</p> : openSessions === null ? <p className="text-sm text-muted-foreground">Loading open sessions…</p> : openSessions.length ? <form onSubmit={submitClockOut} className="grid gap-4 lg:grid-cols-2">
+            <label className="text-sm font-semibold">Employee<select aria-label="Employee to clock out" required value={clockOutForm.employee_id || openSessions[0].employee_id} onChange={(event) => setClockOutForm({ ...clockOutForm, employee_id: event.target.value })} className="mt-2 h-11 w-full rounded-lg border bg-white px-3">{openSessions.map((session) => <option key={session.session_id} value={session.employee_id}>{employees.find((item) => item.employee_id === session.employee_id)?.name || session.employee_id}</option>)}</select></label>
+            <p className="self-end text-sm text-muted-foreground">Clocked in {openSince} ({tenant?.timezone || "UTC"})</p>
+            <Field label="Clock-out date" type="date" required value={clockOutForm.clock_out_date} onChange={(value) => setClockOutForm({ ...clockOutForm, clock_out_date: value })} />
+            <Field label="Clock-out time" type="time" required value={clockOutForm.clock_out_time} onChange={(value) => setClockOutForm({ ...clockOutForm, clock_out_time: value })} />
+            <div className="lg:col-span-2"><Field label="Required reason" required value={clockOutForm.reason} onChange={(value) => setClockOutForm({ ...clockOutForm, reason: value })} /></div>
+            <Button className="lg:col-span-2" disabled={clockOutBusy}>{clockOutBusy ? "Clocking out…" : "Clock out employee"}</Button>
+          </form> : <p className="text-sm text-muted-foreground">No employees are currently clocked in.</p>}
         </CardContent>
       </Card>
       <Card>
