@@ -3,6 +3,21 @@ const normalizedWeekStart = (value) => {
   return Number.isInteger(day) && day >= 0 && day <= 6 ? day : 1;
 };
 
+export const formatUsDate = (isoDate) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || "");
+  return match ? `${match[2]}/${match[3]}/${match[1]}` : "";
+};
+
+export const parseUsDate = (displayDate) => {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(displayDate || "");
+  if (!match) return "";
+  const isoDate = `${match[3]}-${match[1]}-${match[2]}`;
+  const parsed = new Date(`${isoDate}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === isoDate
+    ? isoDate
+    : "";
+};
+
 export const monthGrid = (year, monthIndex, weekStart = 1) => {
   const firstWeekday = new Date(year, monthIndex, 1).getDay();
   return {

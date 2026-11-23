@@ -58,8 +58,9 @@ async function submitLeave(page, reason, dateValue) {
   await page.getByRole("heading", { name: "Leave" }).waitFor();
   await page.getByRole("button", { name: "Request leave", exact: true }).click();
   await page.getByLabel("Leave type").selectOption("ns-annual");
-  await page.getByLabel("From").fill(dateValue);
-  await page.getByLabel("To").fill(dateValue);
+  const displayDate = `${dateValue.slice(5, 7)}/${dateValue.slice(8, 10)}/${dateValue.slice(0, 4)}`;
+  await page.getByLabel("From").fill(displayDate);
+  await page.getByLabel("To").fill(displayDate);
   await page.getByLabel("Leave duration").selectOption("custom_hours");
   await page.getByLabel("Partial start").fill("07:00");
   await page.getByLabel("Partial end").fill("10:00");

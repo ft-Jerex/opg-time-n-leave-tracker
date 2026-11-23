@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addLocalDays,
+  formatUsDate,
   isWeekendDate,
   localDateForTimeZone,
   monthDateForTimeZone,
   monthGrid,
+  parseUsDate,
   workWeekDates,
   workWeekLabel,
   weekdayLabels,
@@ -50,4 +52,12 @@ test("tenant-local date handles opposite sides of midnight", () => {
   const instant = new Date("2026-10-31T16:30:00.000Z");
   assert.equal(localDateForTimeZone("Asia/Manila", instant), "2026-11-01");
   assert.equal(localDateForTimeZone("America/New_York", instant), "2026-10-31");
+});
+
+test("leave request dates use MM/DD/YYYY while retaining ISO values", () => {
+  assert.equal(formatUsDate("2026-12-22"), "12/22/2026");
+  assert.equal(parseUsDate("12/22/2026"), "2026-12-22");
+  assert.equal(parseUsDate("22/12/2026"), "");
+  assert.equal(parseUsDate("02/29/2027"), "");
+  assert.equal(parseUsDate("02/29/2028"), "2028-02-29");
 });

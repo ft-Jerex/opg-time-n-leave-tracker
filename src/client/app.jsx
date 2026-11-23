@@ -31,6 +31,7 @@ import {
 import { groupLeavePolicies } from "./lib/leave-policy-groups";
 import { normalizeSearchQuery } from "../shared/search";
 import { Button } from "./components/ui/button";
+import { UsDateField } from "./components/us-date-field";
 import {
   addLocalDays,
   isWeekendDate,
@@ -1404,8 +1405,8 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
   const validateForm = () => {
     const next = {};
     if (!form.leave_type_id) next.leave_type_id = "Choose a leave type.";
-    if (!form.start_date) next.start_date = "Choose a start date.";
-    if (!form.end_date) next.end_date = "Choose an end date.";
+    if (!form.start_date) next.start_date = "Enter a valid From date as MM/DD/YYYY.";
+    if (!form.end_date) next.end_date = "Enter a valid To date as MM/DD/YYYY.";
     if (form.start_date && form.end_date && form.end_date < form.start_date) {
       next.end_date = "The To date must be on or after the From date.";
     } else if (form.partial_day === "custom_hours" && form.start_date && form.end_date && form.start_date !== form.end_date) {
@@ -1760,17 +1761,15 @@ function Leave({ data, employee, refresh, notify, canWrite, tenant }) {
               {formErrors.leave_type_id ? <p id="leave-type-error" role="alert" className="mt-1 text-sm font-normal text-red-700">{formErrors.leave_type_id}</p> : null}
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field
+              <UsDateField
                 label="From"
-                type="date"
                 value={form.start_date}
                 required
                 error={formErrors.start_date}
                 onChange={(v) => updateForm({ start_date: v })}
               />
-              <Field
+              <UsDateField
                 label="To"
-                type="date"
                 value={form.end_date}
                 required
                 min={form.start_date || undefined}
@@ -4457,6 +4456,7 @@ function Field({ label, onChange, error, helperText, id, className, required = f
     </label>
   );
 }
+
 function Row({ label, value }) {
   return (
     <div>

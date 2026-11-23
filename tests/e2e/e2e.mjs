@@ -34,6 +34,7 @@ while ([0, 6].includes(leaveFrom.getUTCDay()))
   leaveFrom.setUTCDate(leaveFrom.getUTCDate() + 1);
 const leaveTo = new Date(leaveFrom.getTime() + 86400000);
 const isoDate = (value) => value.toISOString().slice(0, 10);
+const usDate = (value) => `${String(value.getUTCMonth() + 1).padStart(2, "0")}/${String(value.getUTCDate()).padStart(2, "0")}/${value.getUTCFullYear()}`;
 
 async function test(
   name,
@@ -144,10 +145,14 @@ await test("operational user clocks attendance and submits correction and leave"
   await page.getByText(correctionId, { exact: true }).waitFor();
   await page.getByRole("button", { name: "Leave", exact: true }).click();
   await page.getByRole("button", { name: "Request leave" }).click();
-  await page.getByLabel("From").fill(isoDate(leaveFrom));
-  await page.getByLabel("To").fill(isoDate(leaveTo));
+  await page.getByLabel("From").fill(usDate(leaveFrom));
+  await page.getByLabel("To").fill(usDate(leaveTo));
+  const leaveCreate = page.waitForRequest((request) => request.url().endsWith("/api/v1/leave-requests") && request.method() === "POST");
   await page.getByLabel("Reason").fill(flowId);
   await page.getByRole("button", { name: "Submit request" }).click();
+  const submittedDates = (await leaveCreate).postDataJSON();
+  if (submittedDates.start_date !== isoDate(leaveFrom) || submittedDates.end_date !== isoDate(leaveTo))
+    throw new Error("leave request dates were not submitted as ISO dates");
   await page.getByText(flowId).waitFor();
 });
 
