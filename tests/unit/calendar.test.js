@@ -8,6 +8,7 @@ import {
   monthDateForTimeZone,
   monthGrid,
   parseUsDate,
+  teamLeaveDay,
   workWeekDates,
   workWeekLabel,
   weekdayLabels,
@@ -60,4 +61,26 @@ test("leave request dates use MM/DD/YYYY while retaining ISO values", () => {
   assert.equal(parseUsDate("22/12/2026"), "");
   assert.equal(parseUsDate("02/29/2027"), "");
   assert.equal(parseUsDate("02/29/2028"), "2028-02-29");
+});
+
+test("team leave days exclude weekends and keep rejected requests out of scheduled leave", () => {
+  const rows = [
+    { request_id: "approved", employee_id: "a", start_date: "2026-12-18", end_date: "2026-12-21", status: "approved" },
+    { request_id: "rejected", employee_id: "b", start_date: "2026-12-21", end_date: "2026-12-21", status: "rejected" },
+  ];
+  assert.deepEqual(teamLeaveDay(rows, "2026-12-19", true).details, []);
+  assert.deepEqual(teamLeaveDay(rows, "2026-12-20", true).scheduled, []);
+  assert.deepEqual(teamLeaveDay(rows, "2026-12-21").scheduled.map((row) => row.request_id), ["approved"]);
+  assert.deepEqual(teamLeaveDay(rows, "2026-12-21").details.map((row) => row.request_id), ["approved", "rejected"]);
+});
+
+test("team leave only flags repeated requests from the same employee", () => {
+  const rows = [
+    { request_id: "one", employee_id: "a", start_date: "2026-12-21", end_date: "2026-12-21", status: "approved" },
+    { request_id: "two", employee_id: "b", start_date: "2026-12-21", end_date: "2026-12-21", status: "approved" },
+    { request_id: "three", employee_id: "a", start_date: "2026-12-21", end_date: "2026-12-21", status: "pending" },
+  ];
+  assert.equal(teamLeaveDay(rows, "2026-12-21").repeatedEmployee, false);
+  assert.equal(teamLeaveDay(rows, "2026-12-21", true).repeatedEmployee, true);
+  assert.equal(teamLeaveDay(rows.slice(0, 2), "2026-12-21", true).repeatedEmployee, false);
 });

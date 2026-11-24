@@ -42,7 +42,7 @@ export const teamAlerts = async (req) => {
 
 export const teamCalendar = async (req) => {
   const { clause, values } = scope(req);
-  const result = await pool.query(`SELECT l.request_id,l.employee_id,e.name,l.leave_type_id,l.start_date,l.end_date,l.status,l.reason FROM leave_requests l JOIN employees e ON e.tenant_id=l.tenant_id AND e.employee_id=l.employee_id WHERE l.tenant_id=$1 AND ${clause} AND l.status IN ('approved','pending') ORDER BY l.start_date,e.name`, [req.tenantId, ...values]);
+  const result = await pool.query(`SELECT l.request_id,l.employee_id,e.name,l.leave_type_id,l.start_date,l.end_date,l.status,l.reason FROM leave_requests l JOIN employees e ON e.tenant_id=l.tenant_id AND e.employee_id=l.employee_id WHERE l.tenant_id=$1 AND ${clause} AND l.status IN ('approved','pending','rejected') ORDER BY l.start_date,e.name`, [req.tenantId, ...values]);
   return result.rows;
 };
 
@@ -54,5 +54,5 @@ export const dashboard = async (req) => {
   const timesheets = await teamTimesheets({ ...req, query: { ...req.query, page: 1, page_size: 1 } });
   const overtime = await pool.query(`SELECT count(*)::integer AS total FROM overtime_requests o JOIN employees e ON e.tenant_id=o.tenant_id AND e.employee_id=o.employee_id WHERE o.tenant_id=$1 AND o.status='pending' AND ${clause}`, [req.tenantId, ...values]);
   const pendingLeave = calendar.filter((item) => item.status === "pending").length;
-  return { direct_reports: reportCount.rows[0].total, timesheets, alerts, upcoming_leave: calendar.slice(0, 10), pending_approvals: pendingLeave + overtime.rows[0].total, pending_overtime_approvals: overtime.rows[0].total };
+  return { direct_reports: reportCount.rows[0].total, timesheets, alerts, upcoming_leave: calendar.filter((item) => item.status !== "rejected").slice(0, 10), pending_approvals: pendingLeave + overtime.rows[0].total, pending_overtime_approvals: overtime.rows[0].total };
 };

@@ -38,6 +38,7 @@ import {
   localDateForTimeZone,
   monthDateForTimeZone,
   monthGrid,
+  teamLeaveDay,
   weekdayLabels,
   workWeekDates,
   workWeekLabel,
@@ -2382,28 +2383,74 @@ function TeamCalendar({ data, user }) {
   return <TeamCalendarView
     rows={rows}
     names={names}
+    leaveTypes={new Map(data["leave-types"].map((item) => [item.leave_type_id, item.name]))}
     weekStart={data.tenants[0]?.week_start}
     timeZone={data.tenants[0]?.timezone}
   />;
 }
 
-function TeamCalendarView({ rows, names, weekStart, timeZone }) {
+function TeamCalendarDay({ localDate, dayNumber, column, rowIndex, rows, names, leaveTypes, includePending }) {
+  const { scheduled, details, repeatedEmployee } = teamLeaveDay(rows, localDate, includePending);
+  const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", {
+    month: "long", day: "numeric", year: "numeric",
+  });
+  const tooltipPosition = column <= 1 ? "left-0" : column >= 5 ? "right-0" : "left-1/2 -translate-x-1/2";
+  return (
+    <div
+      role="group"
+      tabIndex={details.length ? 0 : undefined}
+      aria-label={`${dayLabel}: ${scheduled.length ? `${scheduled.length} scheduled leave request${scheduled.length === 1 ? "" : "s"}` : "No scheduled leave"}`}
+      aria-describedby={details.length ? `team-leave-${localDate}` : undefined}
+      className={`group relative h-28 min-w-0 rounded-md border p-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${repeatedEmployee ? "border-red-400 bg-red-50 text-red-900" : scheduled.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}
+    >
+      <b>{dayNumber}</b>
+      {scheduled.slice(0, 3).map((item) => (
+        <span className="mt-1 block truncate" key={item.request_id}>
+          {names.get(item.employee_id) || item.name || "Team member"}{item.status === "pending" ? " · pending" : ""}
+        </span>
+      ))}
+      {scheduled.length > 3 && <span className="mt-1 block font-semibold">+{scheduled.length - 3} more</span>}
+      {details.length > 0 && (
+        <div
+          id={`team-leave-${localDate}`}
+          role="tooltip"
+          className={`pointer-events-auto absolute z-30 hidden w-56 max-w-[80vw] rounded-lg border bg-white p-3 text-foreground shadow-lg group-hover:block group-focus-within:block ${tooltipPosition} ${rowIndex >= 3 ? "bottom-full" : "top-full"}`}
+        >
+          <p className="mb-2 font-semibold">{dayLabel}</p>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {details.map((item) => {
+              const statusLabel = item.status === "rejected" ? "Denied" : item.status === "approved" ? "Approved" : "Pending";
+              const statusTone = item.status === "rejected" ? "bg-red-100 text-red-800" : item.status === "approved" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900";
+              return (
+                <li className="break-words border-t pt-2 first:border-0 first:pt-0" key={item.request_id}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-semibold">{names.get(item.employee_id) || item.name || "Team member"}</span>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${statusTone}`}>{statusLabel}</span>
+                  </div>
+                  <span className="text-muted-foreground">{leaveTypes.get(item.leave_type_id) || "Leave"} · {date(item.start_date)} – {date(item.end_date)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TeamCalendarView({ rows, names, leaveTypes, weekStart, timeZone }) {
   const [includePending, setIncludePending] = useState(false);
   const [view, setView] = useState("month");
   const [query, setQuery] = useState("");
   const [monthOffset, setMonthOffset] = useState(0);
-  const statuses = includePending ? ["approved", "pending"] : ["approved"];
-  const visibleRows = rows
-    .filter((item) => statuses.includes(item.status))
-    .filter((item) => `${names.get(item.employee_id)} ${item.leave_type_id} ${item.reason}`.toLowerCase().includes(query.toLowerCase()))
+  const searchedRows = rows
+    .filter((item) => `${names.get(item.employee_id) || item.name || ""} ${item.leave_type_id} ${item.reason}`.toLowerCase().includes(query.toLowerCase()))
+    .filter((item) => includePending || item.status !== "pending")
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
+  const visibleRows = searchedRows.filter((item) => item.status === "approved" || item.status === "pending");
   const calendarDate = monthDateForTimeZone(timeZone, monthOffset);
   const calendarKey = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, "0")}`;
-  const { daysInMonth, leadingDays } = monthGrid(
-    calendarDate.getFullYear(),
-    calendarDate.getMonth(),
-    weekStart,
-  );
+  const { daysInMonth, leadingDays } = monthGrid(calendarDate.getFullYear(), calendarDate.getMonth(), weekStart);
   const calendarWeekdays = weekdayLabels(weekStart);
   return (
     <div className="space-y-5">
@@ -2412,16 +2459,53 @@ function TeamCalendarView({ rows, names, weekStart, timeZone }) {
         detail="Upcoming approved leave and optional pending coverage."
         action={
           <label className="flex items-center gap-2 text-sm font-semibold">
-            <input
-              type="checkbox"
-              checked={includePending}
-              onChange={(e) => setIncludePending(e.target.checked)}
-            />
+            <input type="checkbox" checked={includePending} onChange={(event) => setIncludePending(event.target.checked)} />
             Include pending
           </label>
         }
       />
-      <Card><CardContent className="space-y-4 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><Field label="Search team leave" value={query} onChange={setQuery} /><div className="flex gap-2"><Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button><Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button><Button variant="ghost" onClick={() => setQuery("")}>Clear</Button></div></div>{view === "month" ? <div className="space-y-3"><div className="flex items-center justify-between"><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button><b>{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b><Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button></div><div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">{calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}{Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}{Array.from({ length: daysInMonth }, (_, index) => { const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`; const matches = visibleRows.filter((item) => item.start_date <= localDate && item.end_date >= localDate); const overlap = matches.length > 1; const dayLabel = new Date(`${localDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" }); const details = matches.length ? matches.map((item) => `${names.get(item.employee_id) || "Team member"}${item.status === "pending" ? " (pending)" : ""}`).join(", ") : "No leave"; return <div key={localDate} role="group" aria-label={`${dayLabel}: ${details}`} className={`min-h-20 rounded-md border p-2 text-xs ${overlap ? "border-red-400 bg-red-50 text-red-900" : matches.length ? "bg-amber-50 text-amber-900" : "bg-white"}`}><b>{index + 1}</b>{matches.map((item) => <span className="mt-1 block truncate" title={names.get(item.employee_id)} key={item.request_id}>{names.get(item.employee_id)}{item.status === "pending" ? " · pending" : ""}</span>)}</div>; })}</div><p className="text-sm text-muted-foreground">Red days indicate overlapping leave; pending requests are shown only when enabled.</p></div> : visibleRows.length ? <div className="space-y-3">{visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id)}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {formatLeaveAmount(item.chargeable_amount)} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}</div> : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}</CardContent></Card>
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Field label="Search team leave" value={query} onChange={setQuery} />
+            <div className="flex gap-2">
+              <Button variant={view === "month" ? "secondary" : "outline"} onClick={() => setView("month")}>Month</Button>
+              <Button variant={view === "timeline" ? "secondary" : "outline"} onClick={() => setView("timeline")}>Timeline</Button>
+              <Button variant="ghost" onClick={() => setQuery("")}>Clear</Button>
+            </div>
+          </div>
+          {view === "month" ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value - 1)}>Previous month</Button>
+                <b className="text-center">{calendarDate.toLocaleDateString("en", { month: "long", year: "numeric" })}</b>
+                <Button variant="outline" size="sm" onClick={() => setMonthOffset((value) => value + 1)}>Next month</Button>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs" aria-label="Calendar legend">
+                <span className="font-semibold">Legend</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border bg-amber-50" /> Leave scheduled</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-red-400 bg-red-50" /> Multiple requests, same person</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" /> Approved</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Pending</span>
+                <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-600" /> Denied</span>
+              </div>
+              <div className="grid grid-cols-7 gap-1" aria-label="Team leave calendar">
+                {calendarWeekdays.map((day) => <div className="p-2 text-center text-xs font-semibold text-muted-foreground" key={day}>{day}</div>)}
+                {Array.from({ length: leadingDays }, (_, index) => <div aria-hidden="true" key={`blank-${index}`} />)}
+                {Array.from({ length: daysInMonth }, (_, index) => {
+                  const localDate = `${calendarKey}-${String(index + 1).padStart(2, "0")}`;
+                  return <TeamCalendarDay key={localDate} localDate={localDate} dayNumber={index + 1} column={(leadingDays + index) % 7} rowIndex={Math.floor((leadingDays + index) / 7)} rows={searchedRows} names={names} leaveTypes={leaveTypes} includePending={includePending} />;
+                })}
+              </div>
+              <p className="text-sm text-muted-foreground">Hover over or focus a day for request details. Weekends do not show leave.</p>
+            </div>
+          ) : visibleRows.length ? (
+            <div className="space-y-3">
+              {visibleRows.map((item) => <Card key={item.request_id}><CardContent className="flex flex-col justify-between gap-3 pt-6 sm:flex-row sm:items-center"><div><h2>{names.get(item.employee_id) || item.name}</h2><p className="text-sm text-muted-foreground">{date(item.start_date)} – {date(item.end_date)} · {formatLeaveAmount(item.chargeable_amount)} day(s)</p></div><Status value={item.status} /></CardContent></Card>)}
+            </div>
+          ) : <Empty title="No scheduled team leave" detail="Approved leave will appear here; include pending to preview requests." />}
+        </CardContent>
+      </Card>
     </div>
   );
 }

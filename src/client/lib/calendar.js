@@ -80,6 +80,15 @@ export const isWeekendDate = (localDate) => {
   return day === 0 || day === 6;
 };
 
+export const teamLeaveDay = (rows, localDate, includePending = false) => {
+  if (isWeekendDate(localDate))
+    return { scheduled: [], details: [], repeatedEmployee: false };
+  const details = rows.filter((row) => row.start_date <= localDate && row.end_date >= localDate);
+  const scheduled = details.filter((row) => row.status === "approved" || (includePending && row.status === "pending"));
+  const repeatedEmployee = new Set(scheduled.map((row) => row.employee_id)).size < scheduled.length;
+  return { scheduled, details, repeatedEmployee };
+};
+
 export const workWeekLabel = (localDate) => {
   const [start, , , , end] = workWeekDates(localDate);
   const [startYear, startMonth, startDay] = start.split("-").map(Number);
